@@ -1,9 +1,22 @@
 <script>
+  import { onMount } from 'svelte';
   import Nav from './Nav.svelte';
-  import { projectsStore } from './mockStore.js';
+  import {
+    projectsStore,
+    loadProjects
+  } from './mockStore.js';
 
   export let onNavigate = () => {};
   export let navVariant = 'glass';
+
+  let loadError = '';
+
+  onMount(() => {
+    loadProjects().catch((error) => {
+      console.error(error);
+      loadError = 'Could not load projects from the backend.';
+    });
+  });
 </script>
 
 <div class="page">
@@ -13,6 +26,10 @@
     <h1 class="section-title">All Projects</h1>
     <span class="section-count">{$projectsStore.length} projects</span>
   </div>
+
+  {#if loadError}
+    <p class="load-error">{loadError}</p>
+  {/if}
 
   <div class="card-wrap">
     <div class="card">
