@@ -1,5 +1,5 @@
 <script>
-  /** totals: { reviewed, kept, removed, added, skipped, undecided } */
+  /** totals: { decided, kept, removed, added, skipped, undecided } */
   export let totals;
   export let height = 12;
   export let withLegend = false;
@@ -19,7 +19,7 @@
     { k: 'undecided', label: 'Undecided', varColor: 'var(--v2-undecided)', mute: true },
   ];
 
-  $: total = ((totals.reviewed ?? 0) + (totals.undecided ?? 0)) || 1;
+  $: total = ((totals.decided ?? 0) + (totals.undecided ?? 0)) || 1;
 </script>
 
 <div class="decision-bar">
