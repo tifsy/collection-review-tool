@@ -19,8 +19,8 @@
   export let showForwardButton = false;
   export let onForward = null;
   export let forwardButtonTitle = "Forward toward current queue item";
-  export let reviewedDecisionLabel = "";
-  export let reviewedModeMessage = "";
+  export let decidedDecisionLabel = "";
+  export let decidedModeMessage = "";
   export let showReturnToQueueButton = false;
   export let onReturnToQueue = null;
 
@@ -168,14 +168,14 @@
   }
 
   $: canKeep = !loading && (!editMetadata || (correctLanguage && correctPubCountry && correctPubState));
-  $: reviewedDecisionClass =
-    reviewedDecisionLabel === "keep"
+  $: decidedDecisionClass =
+    decidedDecisionLabel === "keep"
       ? "decision-keep"
-      : reviewedDecisionLabel === "remove"
+      : decidedDecisionLabel === "remove"
       ? "decision-remove"
-      : reviewedDecisionLabel === "add"
+      : decidedDecisionLabel === "add"
       ? "decision-add"
-      : reviewedDecisionLabel === "skip"
+      : decidedDecisionLabel === "skip"
       ? "decision-skip"
       : "";
 </script>
@@ -204,20 +204,20 @@
         →
       </button>
     {/if}
-    {#if reviewedModeMessage || reviewedDecisionLabel || showReturnToQueueButton}
-      <div class="reviewed-mode-center">
-        {#if reviewedModeMessage}
-          <div class="reviewed-mode-chip reviewed-mode-message">{reviewedModeMessage}</div>
+    {#if decidedModeMessage || decidedDecisionLabel || showReturnToQueueButton}
+      <div class="decided-mode-center">
+        {#if decidedModeMessage}
+          <div class="decided-mode-chip decided-mode-message">{decidedModeMessage}</div>
         {/if}
-        {#if reviewedDecisionLabel}
-          <div class={`reviewed-mode-chip reviewed-decision-pill ${reviewedDecisionClass}`}>
-            Previous decision: {reviewedDecisionLabel}
+        {#if decidedDecisionLabel}
+          <div class={`decided-mode-chip decided-decision-pill ${decidedDecisionClass}`}>
+            Previous decision: {decidedDecisionLabel}
           </div>
         {/if}
         {#if showReturnToQueueButton}
           <button
             type="button"
-            class="reviewed-mode-chip return-to-queue-button"
+            class="decided-mode-chip return-to-queue-button"
             on:click={onReturnToQueue}
           >
             Back to undecided queue →
@@ -463,7 +463,7 @@
     transform: translateY(1px);
   }
 
-  .reviewed-mode-chip {
+  .decided-mode-chip {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -476,38 +476,38 @@
     white-space: nowrap;
   }
 
-  .reviewed-decision-pill {
+  .decided-decision-pill {
     border: 1px solid #d0d7de;
     background: #f6f8fa;
     color: #34495e;
     text-transform: capitalize;
   }
 
-  .reviewed-decision-pill.decision-keep {
+  .decided-decision-pill.decision-keep {
     background-color: #d4edda;
     border-color: #badbcc;
     color: #155724;
   }
 
-  .reviewed-decision-pill.decision-remove {
+  .decided-decision-pill.decision-remove {
     background-color: #f8d7da;
     border-color: #f5c2c7;
     color: #721c24;
   }
 
-  .reviewed-decision-pill.decision-add {
+  .decided-decision-pill.decision-add {
     background-color: #d1ecf1;
     border-color: #bcdfe6;
     color: #0c5460;
   }
 
-  .reviewed-decision-pill.decision-skip {
+  .decided-decision-pill.decision-skip {
     background-color: #e2e3e5;
     border-color: #d3d6d8;
     color: #495057;
   }
 
-  .reviewed-mode-center {
+  .decided-mode-center {
     position: absolute;
     left: 50%;
     bottom: -48px;
@@ -519,7 +519,7 @@
     max-width: calc(100% - 112px);
   }
 
-  .reviewed-mode-message {
+  .decided-mode-message {
     border: 1px solid #cfe2ff;
     background: #f5faff;
     color: #2c3e50;
