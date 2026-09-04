@@ -1,17 +1,33 @@
 <script>
   import Nav from './Nav.svelte';
   import DecisionBar from './DecisionBar.svelte';
-  import { PROJECTS } from './mockData.js';
-  import { reviewState, decisionsStore, changeDecision, saveGuidelines, downloadCSV } from './mockStore.js';
+  import { reviewState, decisionsStore, changeDecision, saveGuidelines, downloadCSV, loadProject } from './mockStore.js';
   import { get } from 'svelte/store';
+  import { onMount } from 'svelte';
 
   export let onNavigate = () => {};
   export let navVariant = 'glass';
 
   const projectGuid = window.location.pathname.split('/').pop();
-  const p = PROJECTS[projectGuid] ?? null;
-  const heroMain = p ? p.name.split(' · ')[0] : '';
-  const heroSub  = p ? p.name.split(' · ').slice(1).join(' · ') : '';
+
+  let p = null;
+  let loadError = '';
+
+  $: heroMain = p ? p.name.split(' · ')[0] : '';
+  $: heroSub = p
+    ? p.name.split(' · ').slice(1).join(' · ')
+    : '';
+
+  onMount(() => {
+    loadProject(projectGuid)
+      .then((project) => {
+        p = project;
+      })
+      .catch((error) => {
+        console.error(error);
+        loadError = 'Could not load the project from the backend.';
+      });
+  });
 
   const VERDICT_LABELS  = { kept: 'Kept', removed: 'Removed', added: 'Added', skipped: 'Skipped' };
   const VERDICT_COLORS  = { kept: '#E25C40', removed: '#1A1C1F', added: '#F5A48A', skipped: '#9CA0A8' };
@@ -25,41 +41,39 @@
   // ── Compute all stats from decisionsStore ─────────────────────────────
   $: projectDecisions = $decisionsStore[projectGuid] ?? {};
 
-  function queueStats(decisions) {
-    const kept    = decisions.filter(d => d.verdict === 'kept').length;
-    const removed = decisions.filter(d => d.verdict === 'removed').length;
-    const added   = decisions.filter(d => d.verdict === 'added').length;
-    const skipped = decisions.filter(d => d.verdict === 'skipped').length;
-    return { kept, removed, added, skipped, decided: kept + removed + added + skipped };
-  }
+  $: projectStats = p?.stats ?? {
+  kept: 0,
+  removed: 0,
+  added: 0,
+  skipped: 0,
+  decided: 0,
+  undecided: 0,
+  total: 0,
+  progress: 0
+};
 
-  $: projectStats = (() => {
-    if (!p) return { kept: 0, removed: 0, added: 0, skipped: 0, decided: 0, undecided: 0, total: 0, progress: 0 };
-    let kept = 0, removed = 0, added = 0, skipped = 0, decided = 0, total = 0;
-    for (const q of p.queues) {
-      const qs = queueStats(projectDecisions[q.id] ?? []);
-      kept += qs.kept; removed += qs.removed; added += qs.added; skipped += qs.skipped;
-      decided += qs.decided; total += q.total;
-    }
-    return { kept, removed, added, skipped, decided, undecided: total - decided, total, progress: total > 0 ? decided / total : 0 };
-  })();
-
-  // ── Highlight state ────────────────────────────────────────────────────
+  // Highlighted segment in DecisionBar
   let highlight = null;
+
+  // Settings modal
   let showSettings = false;
 
-  // ── Bucket modal (Fix 4) ───────────────────────────────────────────────
-  let bucketModal = null; // { verdict, sources: [{source, homepage, verdict, queue, reason}] }
+  // Decision bucket modal — still backed by mock decision data
+  let bucketModal = null;
 
   function openBucket(verdict) {
-    const sources = p.queues.flatMap(q => (projectDecisions[q.id] ?? []).filter(d => d.verdict === verdict));
+    const sources = p.queues.flatMap((queue) =>
+      (projectDecisions[queue.id] ?? []).filter(
+        (decision) => decision.verdict === verdict
+      )
+    );
     bucketModal = { verdict, sources };
   }
-
   // Change decision from inside bucket modal
   let bucketChangeTarget = null; // { source, queueId }
   let bucketNewVerdict = '';
   let bucketReason = '';
+
   $: bucketReasonRequired = bucketNewVerdict === 'kept' || bucketNewVerdict === 'removed';
   $: bucketCanConfirm = bucketNewVerdict && (!bucketReasonRequired || bucketReason.trim());
 
@@ -239,18 +253,18 @@
 
     <div class="queues-list">
       {#each p.queues as q, i}
-        {@const qd = projectDecisions[q.id] ?? []}
-        {@const qs = queueStats(qd)}
+        {@const qs = q.stats}
         {@const pct = q.total > 0 ? qs.decided / q.total : 0}
-        {@const isDecided = q.total > 0 && qs.decided === q.total}
-        {@const isNew  = qs.decided === 0}
+        {@const isComplete = q.total > 0 && qs.decided === q.total}
+        {@const isNew = qs.decided === 0}
+
         <div class="queue-card">
           <div class="queue-header">
             <div class="queue-id-row">
               <span class="queue-id">{q.id}</span>
               <span class="queue-pct">{Math.round(pct * 100)}%</span>
             </div>
-            {#if isDecided}
+            {#if isComplete}
               <span class="chip chip-skipped"><span class="chip-dot chip-dot-skipped"></span>Completed</span>
             {:else if isNew}
               <span class="chip chip-warn"><span class="chip-dot chip-dot-warn"></span>Unassigned</span>
