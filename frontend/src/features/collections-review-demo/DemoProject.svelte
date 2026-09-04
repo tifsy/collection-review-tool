@@ -30,18 +30,18 @@
     const removed = decisions.filter(d => d.verdict === 'removed').length;
     const added   = decisions.filter(d => d.verdict === 'added').length;
     const skipped = decisions.filter(d => d.verdict === 'skipped').length;
-    return { kept, removed, added, skipped, done: kept + removed + added + skipped };
+    return { kept, removed, added, skipped, decided: kept + removed + added + skipped };
   }
 
   $: projectStats = (() => {
-    if (!p) return { kept: 0, removed: 0, added: 0, skipped: 0, reviewed: 0, undecided: 0, total: 0, progress: 0 };
-    let kept = 0, removed = 0, added = 0, skipped = 0, done = 0, total = 0;
+    if (!p) return { kept: 0, removed: 0, added: 0, skipped: 0, decided: 0, undecided: 0, total: 0, progress: 0 };
+    let kept = 0, removed = 0, added = 0, skipped = 0, decided = 0, total = 0;
     for (const q of p.queues) {
       const qs = queueStats(projectDecisions[q.id] ?? []);
       kept += qs.kept; removed += qs.removed; added += qs.added; skipped += qs.skipped;
-      done += qs.done; total += q.total;
+      decided += qs.decided; total += q.total;
     }
-    return { kept, removed, added, skipped, reviewed: done, undecided: total - done, total, progress: total > 0 ? done / total : 0 };
+    return { kept, removed, added, skipped, decided, undecided: total - decided, total, progress: total > 0 ? decided / total : 0 };
   })();
 
   // ── Highlight state ────────────────────────────────────────────────────
@@ -165,7 +165,7 @@
         <div>
           <div class="stats-label">Reviewed</div>
           <div class="stats-count">
-            {projectStats.reviewed.toLocaleString()}<span class="stats-total"> / {projectStats.total.toLocaleString()}</span>
+            {projectStats.decided.toLocaleString()}<span class="stats-total"> / {projectStats.total.toLocaleString()}</span>
           </div>
         </div>
         <div class="stats-right">
@@ -175,7 +175,7 @@
       </div>
 
       <div class="stats-bar-wrap">
-        <DecisionBar totals={{ reviewed: projectStats.reviewed, kept: projectStats.kept, removed: projectStats.removed, added: projectStats.added, skipped: projectStats.skipped, undecided: projectStats.undecided }} height={16} {highlight} />
+        <DecisionBar totals={{ decided: projectStats.decided, kept: projectStats.kept, removed: projectStats.removed, added: projectStats.added, skipped: projectStats.skipped, undecided: projectStats.undecided }} height={16} {highlight} />
       </div>
 
       <!-- Decision tiles — click ↗ to open bucket modal -->
@@ -241,16 +241,16 @@
       {#each p.queues as q, i}
         {@const qd = projectDecisions[q.id] ?? []}
         {@const qs = queueStats(qd)}
-        {@const pct = q.total > 0 ? qs.done / q.total : 0}
-        {@const isDone = q.total > 0 && qs.done === q.total}
-        {@const isNew  = qs.done === 0}
+        {@const pct = q.total > 0 ? qs.decided / q.total : 0}
+        {@const isDecided = q.total > 0 && qs.decided === q.total}
+        {@const isNew  = qs.decided === 0}
         <div class="queue-card">
           <div class="queue-header">
             <div class="queue-id-row">
               <span class="queue-id">{q.id}</span>
               <span class="queue-pct">{Math.round(pct * 100)}%</span>
             </div>
-            {#if isDone}
+            {#if isDecided}
               <span class="chip chip-skipped"><span class="chip-dot chip-dot-skipped"></span>Completed</span>
             {:else if isNew}
               <span class="chip chip-warn"><span class="chip-dot chip-dot-warn"></span>Unassigned</span>
@@ -269,7 +269,7 @@
           </div>
 
           <div class="queue-bar">
-            <DecisionBar totals={{ reviewed: qs.done, kept: qs.kept, removed: qs.removed, added: qs.added, skipped: qs.skipped, undecided: q.total - qs.done }} height={6} />
+            <DecisionBar totals={{ decided: qs.decided, kept: qs.kept, removed: qs.removed, added: qs.added, skipped: qs.skipped, undecided: q.total - qs.decided }} height={6} />
           </div>
 
           <div class="queue-footer">
