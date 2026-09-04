@@ -1,9 +1,9 @@
 <script>
   import Nav from './Nav.svelte';
   import DecisionBar from './DecisionBar.svelte';
-  import { PROJECTS } from './mockData.js';
-  import { decisionsStore, changeDecision } from './mockStore.js';
+  import { decisionsStore, changeDecision, loadProject } from './mockStore.js';
   import { get } from 'svelte/store';
+  import { onMount } from 'svelte';
 
   export let onNavigate = () => {};
   export let navVariant = 'glass';
@@ -13,47 +13,67 @@
   const projectGuid = parts[3];
   const queueGuid = parts[5];
 
-  const p = PROJECTS[projectGuid] ?? PROJECTS['proj_8fa221'];
-  const q = p.queues.find(qq => qq.guid === queueGuid) ?? p.queues[0];
+  let p = null;
+  let q = null;
+  let loadError = '';
 
-  // ── Derive queue stats from decisionsStore ────────────────────────────
-  function computeStats(decisions) {
-    const kept    = decisions.filter(d => d.verdict === 'kept').length;
-    const removed = decisions.filter(d => d.verdict === 'removed').length;
-    const added   = decisions.filter(d => d.verdict === 'added').length;
-    const skipped = decisions.filter(d => d.verdict === 'skipped').length;
-    const decided = kept + removed + added + skipped;
-    return { kept, removed, added, skipped, decided, undecided: Math.max(0, q.total - decided) };
-  }
+  const EMPTY_STATS = {
+    kept: 0,
+    removed: 0,
+    added: 0,
+    skipped: 0,
+    decided: 0,
+    undecided: 0,
+    total: 0,
+    progress: 0
+  };
 
-  $: qDecisions = $decisionsStore[projectGuid]?.[q.id] ?? [];
-  $: displayStats = computeStats(qDecisions);
-  $: queuePct = q.total > 0 ? Math.round(displayStats.decided / q.total * 100) : 0;
+  onMount(async () => {
+    try {
+      p = await loadProject(projectGuid);
+      q = p.queues.find((queue) => queue.guid === queueGuid) ?? null;
+
+      if (!q) {
+        throw new Error('Queue not found for this project.');
+      }
+    } catch (error) {
+      console.error(error);
+      loadError = error.message || 'Could not load the reviewer queue.';
+    }
+  });
+
+  // Bucket modal still uses mock decisions for now
+  $: qDecisions =
+    q ? ($decisionsStore[projectGuid]?.[q.id] ?? []) : [];
+
+  // Real queue API stats
+  $: displayStats = q?.stats ?? EMPTY_STATS;
+
+  $: queuePct =
+    displayStats.total > 0
+      ? Math.round(displayStats.progress * 100)
+      : 0;
+
   $: queueTotals = {
     decided: displayStats.decided,
     kept: displayStats.kept,
     removed: displayStats.removed,
     added: displayStats.added,
     skipped: displayStats.skipped,
-    undecided: displayStats.undecided,
+    undecided: displayStats.undecided
   };
 
-  // ── Project-level totals from decisionsStore ─────────────────────────
-  $: projectQueues = p.queues.map(qq => {
-    const qd  = $decisionsStore[projectGuid]?.[qq.id] ?? [];
-    const qs  = computeStats(qd);
-    return { ...qq, ...qs };
-  });
-  $: projectDecided  = projectQueues.reduce((s, qq) => s + qq.decided, 0);
-  $: projectTotal = p.queues.reduce((s, qq) => s + qq.total, 0);
-  $: projectPct   = projectTotal > 0 ? Math.round(projectDecided / projectTotal * 100) : 0;
-  $: projectStats = projectQueues.reduce((s, qq) => ({
-    kept:    s.kept    + (qq.kept    ?? 0),
-    removed: s.removed + (qq.removed ?? 0),
-    added:   s.added   + (qq.added   ?? 0),
-    skipped: s.skipped + (qq.skipped ?? 0),
-  }), { kept: 0, removed: 0, added: 0, skipped: 0 });
-  $: projectUndecided = Math.max(0, projectTotal - projectDecided);
+  // Real project-wide API stats
+  $: projectStats = p?.stats ?? EMPTY_STATS;
+  $: projectDecided = projectStats.decided;
+  $: projectTotal = projectStats.total;
+
+  $: projectPct =
+    projectTotal > 0
+      ? Math.round(projectStats.progress * 100)
+      : 0;
+
+  $: projectUndecided = projectStats.undecided;
 
   const DECISION_TILES = [
     { k: 'kept',    label: 'Kept',    color: '#E25C40' },
@@ -107,120 +127,133 @@
   }
 </script>
 
-<div class="landing">
-  <Nav
-    role="queue"
-    projectCtx={p.name}
-    {projectGuid}
-    {queueGuid}
-    {onNavigate}
-    variant={navVariant}
-  />
-
-  <!-- ── HERO ── -->
-  <div class="hero">
-    <div class="hero-eyebrow">You've been invited to review</div>
-    <h1 class="hero-h1">{q.id}</h1>
-    <div class="chips-row">
-      <span class="chip chip-neutral">{q.total} sources assigned</span>
-      <span class="chip chip-neutral">Project: {p.name}</span>
-    </div>
-    <p class="about-tool">
-      <span class="about-label">How reviewing works. </span>
-      You'll see one source at a time. For each, decide whether to
-      <b class="about-kept"> Keep</b> it, <b class="about-removed">Remove</b> it, or <b class="about-skipped">Skip</b> if you're unsure.
-      You may also add new sources. No account needed; your progress saves automatically.
-    </p>
-  </div>
-
-  <!-- ── YOUR QUEUE CARD ── -->
-  <div class="section-pad">
-    <div class="card">
-      <div class="card-header">
-        <span class="card-title">Your queue</span>
-        <span class="card-header-right">{displayStats.undecided} left to decide</span>
-      </div>
-
-      <div class="progress-section">
-        <div class="progress-row">
-          <span class="progress-label">Progress · <b class="mono">{displayStats.decided}</b> of {q.total} sources decided</span>
-          <span class="progress-pct">{queuePct}%</span>
-        </div>
-        <div class="bar-wrap">
-          <DecisionBar totals={queueTotals} height={16} {highlight} />
-        </div>
-      </div>
-
-      <div class="browse-label">Browse your decisions</div>
-      <div class="decision-grid">
-        {#each DECISION_TILES as b}
-          <button
-            class="decision-btn"
-            style:border-color={highlight === b.k ? b.color : 'var(--v2-line)'}
-            style:background={highlight === b.k ? `${b.color}0e` : '#fff'}
-            on:mouseenter={() => highlight = b.k}
-            on:mouseleave={() => highlight = null}
-            on:focus={() => highlight = b.k}
-            on:blur={() => highlight = null}
-            on:click={() => openBucket(b.k)}
-          >
-            <div>
-              <div class="decision-label-row">
-                <span class="decision-swatch" style:background={b.color}></span>
-                {b.label}
-              </div>
-              <div class="decision-count">{displayStats[b.k]}</div>
-            </div>
-            <svg
-              width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"
-              style:color={highlight === b.k ? b.color : 'var(--v2-mute)'}
-              style:transition="color .2s"
-            ><path d="M7 17 17 7M9 7h8v8"/></svg>
-          </button>
-        {/each}
-      </div>
-
-      <div class="card-footer">
-        <button class="btn btn-primary btn-lg" on:click={() => onNavigate('/demo/reviews/124')}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-          Open my queue
-        </button>
-        <button class="btn btn-lg" on:click={() => onNavigate(`/demo/review-projects/${projectGuid}/queues/${queueGuid}/decisions`)}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2 8l10 5 10-5z"/><path d="m2 14 10 5 10-5M2 11l10 5 10-5"/></svg>
-          Review all decisions
-        </button>
-      </div>
+{#if loadError}
+  <div class="landing">
+    <div class="section-pad">
+      <div class="card">{loadError}</div>
     </div>
   </div>
+{:else if !p || !q}
+  <div class="landing">
+    <div class="section-pad">
+      <div class="card">Loading reviewer queue...</div>
+    </div>
+  </div>
+{:else}
+  <div class="landing">
+    <Nav
+      role="queue"
+      projectCtx={p.name}
+      {projectGuid}
+      {queueGuid}
+      {onNavigate}
+      variant={navVariant}
+    />
 
-  <!-- ── PROJECT STATUS CARD ── -->
-  <div class="section-pad-sm">
-    <div class="card">
-      <div class="status-header">
-        <span class="card-title">Project-wide status</span>
-        <span class="card-header-right">
-          {projectDecided.toLocaleString()} / {projectTotal.toLocaleString()} sources · {projectPct}%
-        </span>
+    <!-- ── HERO ── -->
+    <div class="hero">
+      <div class="hero-eyebrow">You've been invited to review</div>
+      <h1 class="hero-h1">{q.id}</h1>
+      <div class="chips-row">
+        <span class="chip chip-neutral">{q.total} sources assigned</span>
+        <span class="chip chip-neutral">Project: {p.name}</span>
       </div>
-      <div class="project-totals">
-        {#each [
-          { label: 'Total',     value: projectTotal,              color: 'var(--v2-ink)' },
-          { label: 'Kept',      value: projectStats.kept,         color: '#E25C40' },
-          { label: 'Added',     value: projectStats.added,        color: '#F5A48A' },
-          { label: 'Removed',   value: projectStats.removed,      color: '#1A1C1F' },
-          { label: 'Skipped',   value: projectStats.skipped,      color: '#9CA0A8' },
-          { label: 'Undecided', value: projectUndecided,          color: 'var(--v2-mute)' },
-        ] as t, i}
-          <div class="ptotal-col" class:has-divider={i > 0}>
-            <div class="ptotal-label" style:color={t.color}>{t.label}</div>
-            <div class="ptotal-value" style:color={t.color}>{t.value.toLocaleString()}</div>
+      <p class="about-tool">
+        <span class="about-label">How reviewing works. </span>
+        You'll see one source at a time. For each, decide whether to
+        <b class="about-kept"> Keep</b> it, <b class="about-removed">Remove</b> it, or <b class="about-skipped">Skip</b> if you're unsure.
+        You may also add new sources. No account needed; your progress saves automatically.
+      </p>
+    </div>
+
+    <!-- ── YOUR QUEUE CARD ── -->
+    <div class="section-pad">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Your queue</span>
+          <span class="card-header-right">{displayStats.undecided} left to decide</span>
+        </div>
+
+        <div class="progress-section">
+          <div class="progress-row">
+            <span class="progress-label">Progress · <b class="mono">{displayStats.decided}</b> of {q.total} sources decided</span>
+            <span class="progress-pct">{queuePct}%</span>
           </div>
-        {/each}
+          <div class="bar-wrap">
+            <DecisionBar totals={queueTotals} height={16} {highlight} />
+          </div>
+        </div>
+
+        <div class="browse-label">Browse your decisions</div>
+        <div class="decision-grid">
+          {#each DECISION_TILES as b}
+            <button
+              class="decision-btn"
+              style:border-color={highlight === b.k ? b.color : 'var(--v2-line)'}
+              style:background={highlight === b.k ? `${b.color}0e` : '#fff'}
+              on:mouseenter={() => highlight = b.k}
+              on:mouseleave={() => highlight = null}
+              on:focus={() => highlight = b.k}
+              on:blur={() => highlight = null}
+              on:click={() => openBucket(b.k)}
+            >
+              <div>
+                <div class="decision-label-row">
+                  <span class="decision-swatch" style:background={b.color}></span>
+                  {b.label}
+                </div>
+                <div class="decision-count">{displayStats[b.k]}</div>
+              </div>
+              <svg
+                width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"
+                style:color={highlight === b.k ? b.color : 'var(--v2-mute)'}
+                style:transition="color .2s"
+              ><path d="M7 17 17 7M9 7h8v8"/></svg>
+            </button>
+          {/each}
+        </div>
+
+        <div class="card-footer">
+          <button class="btn btn-primary btn-lg" on:click={() => onNavigate(`/demo/reviews/${queueGuid}`)}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+            Open my queue
+          </button>
+          <button class="btn btn-lg" on:click={() => onNavigate(`/demo/review-projects/${projectGuid}/queues/${queueGuid}/decisions`)}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2 8l10 5 10-5z"/><path d="m2 14 10 5 10-5M2 11l10 5 10-5"/></svg>
+            Review all decisions
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── PROJECT STATUS CARD ── -->
+    <div class="section-pad-sm">
+      <div class="card">
+        <div class="status-header">
+          <span class="card-title">Project-wide status</span>
+          <span class="card-header-right">
+            {projectDecided.toLocaleString()} / {projectTotal.toLocaleString()} sources · {projectPct}%
+          </span>
+        </div>
+        <div class="project-totals">
+          {#each [
+            { label: 'Total',     value: projectTotal,              color: 'var(--v2-ink)' },
+            { label: 'Kept',      value: projectStats.kept,         color: '#E25C40' },
+            { label: 'Added',     value: projectStats.added,        color: '#F5A48A' },
+            { label: 'Removed',   value: projectStats.removed,      color: '#1A1C1F' },
+            { label: 'Skipped',   value: projectStats.skipped,      color: '#9CA0A8' },
+            { label: 'Undecided', value: projectUndecided,          color: 'var(--v2-mute)' },
+          ] as t, i}
+            <div class="ptotal-col" class:has-divider={i > 0}>
+              <div class="ptotal-label" style:color={t.color}>{t.label}</div>
+              <div class="ptotal-value" style:color={t.color}>{t.value.toLocaleString()}</div>
+            </div>
+          {/each}
+        </div>
       </div>
     </div>
   </div>
-</div>
-
+{/if}
 <!-- ── BUCKET MODAL (Fix 4) ── -->
 {#if bucketModal}
   <div class="modal-overlay" on:click={() => { bucketModal = null; bucketChangeTarget = null; }} role="dialog" aria-modal="true">
