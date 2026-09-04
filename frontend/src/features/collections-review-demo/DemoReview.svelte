@@ -6,6 +6,7 @@
     decideQueueItem,
     proposeNewSourceByQueueGuid,
     updateQueueItemSourceMetadata,
+    getReviewQueueGuidelines
   } from '../../lib/api.js';
   import { onMount } from 'svelte';
 
@@ -23,6 +24,9 @@ let sourceIdx = 0;
 let loading = true;
 let loadError = '';
 let saving = false;
+let guidelines = '';
+let guidelinesLoading = true;
+let guidelinesError = '';
 
 function adaptItem(item) {
   const metadata = item.source_metadata ?? {};
@@ -40,6 +44,22 @@ function adaptItem(item) {
 }
 
 onMount(async () => {
+    getReviewQueueGuidelines(queueGuid)
+    .then((result) => {
+      guidelines = result || '';
+    })
+    .catch((error) => {
+      console.error(error);
+
+      guidelinesError =
+        error.response?.data?.error ||
+        error.message ||
+        'Could not load guidelines.';
+    })
+    .finally(() => {
+      guidelinesLoading = false;
+    });
+
   try {
     const [queueData, itemData] = await Promise.all([
       getReviewByQueueGuid(queueGuid),
@@ -662,18 +682,28 @@ async function skip() {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="header-icon"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M8 13h8M8 17h6"/></svg>
             <span class="sidebar-card-title">Guidelines</span>
           </div>
-          <div class="guidelines-list">
-            {#each [
-              { b: 'Keep',   color: '#E25C40', t: 'sources that fit the project criteria' },
-              { b: 'Remove', color: '#1A1C1F', t: 'sources that do not' },
-              { b: 'Skip',   color: '#9CA0A8', t: 'unsure — leave a note for the lead' },
-            ] as g}
-              <div class="guideline-row">
-                <span class="guideline-verb" style:color={g.color}>{g.b}</span>
-                <span class="guideline-text">{g.t}</span>
-              </div>
-            {/each}
-          </div>
+         <div class="guidelines-list">
+  {#if guidelinesLoading}
+    <div class="guidelines-message">
+      Loading guidelines...
+    </div>
+
+  {:else if guidelinesError}
+    <div class="guidelines-message guidelines-error">
+      {guidelinesError}
+    </div>
+
+  {:else if guidelines}
+    <div class="guidelines-content">
+      {guidelines}
+    </div>
+
+  {:else}
+    <div class="guidelines-message">
+      No guidelines provided.
+    </div>
+  {/if}
+</div>
         </div>
 
         <!-- Status card -->
@@ -952,6 +982,25 @@ async function skip() {
   .sidebar-card-title { font-size: 15.5px; font-weight: 600; }
   .header-icon { color: var(--v2-accent); }
   .guidelines-list { padding: 10px 18px 14px; display: flex; flex-direction: column; gap: 6px; }
+  .guidelines-content {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 320px;
+  overflow-y: auto;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--v2-body);
+}
+
+.guidelines-message {
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--v2-mute);
+}
+
+.guidelines-error {
+  color: #b42318;
+}
   .guideline-row { display: flex; gap: 10px; font-size: 14px; align-items: baseline; }
   .guideline-verb { font-weight: 600; min-width: 50px; }
   .guideline-text { color: var(--v2-body); }
