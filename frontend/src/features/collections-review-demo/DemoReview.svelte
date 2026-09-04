@@ -1,51 +1,217 @@
 <script>
   import Nav from './Nav.svelte';
   import {
-    reviewState, sessionCounts, decisionsStore,
-    QUEUE_SOURCES,
-    decideSource, redecideCurrentSource, proposeSource, saveSourceMeta, navigateToSource,
-  } from './mockStore.js';
+    getReviewByQueueGuid,
+    getReviewItemsByQueueGuid,
+    decideQueueItem,
+    proposeNewSourceByQueueGuid,
+    updateQueueItemSourceMetadata,
+  } from '../../lib/api.js';
+  import { onMount } from 'svelte';
 
   export let onNavigate = () => {};
   export let navVariant = 'glass';
 
-  // ── Current source ────────────────────────────────────────────────────────
-  $: src = QUEUE_SOURCES[$reviewState.sourceIdx] ?? null;
-  $: allDone = src === null;
+  // Queue GUID from /demo/reviews/{queueGuid}
+const queueGuid = window.location.pathname.split('/').pop();
 
-  // Whether this source has already been decided (navigated back with Prev)
-  $: q1Decisions = $decisionsStore['proj_8fa221']?.['Queue #1'] ?? [];
-  $: currentDecision = src ? (q1Decisions.find(d => d.source === src.title) ?? null) : null;
+let projectGuid = '';
+let projectName = '';
+let queue = null;
+let items = [];
+let sourceIdx = 0;
+let loading = true;
+let loadError = '';
+let saving = false;
 
-  // Merge store meta-overrides onto the static source record.
-  $: meta = src ? [
-    { k: 'language', label: 'Language',    v: ($reviewState.metaOverrides[src.id]?.language ?? src.language) },
-    { k: 'country',  label: 'Pub country', v: ($reviewState.metaOverrides[src.id]?.country  ?? src.country)  },
-    { k: 'state',    label: 'Pub state',   v: ($reviewState.metaOverrides[src.id]?.state    ?? src.state)    },
-  ] : [];
+function adaptItem(item) {
+  const metadata = item.source_metadata ?? {};
+
+  return {
+    ...item,
+    title:
+      item.source_label ||
+      `Source ${item.source_id ?? item.id}`,
+    homepage: item.source_homepage || '',
+    language: metadata.primary_language || '—',
+    country: metadata.pub_country || '—',
+    state: metadata.pub_state || '—',
+  };
+}
+
+onMount(async () => {
+  try {
+    const [queueData, itemData] = await Promise.all([
+      getReviewByQueueGuid(queueGuid),
+      getReviewItemsByQueueGuid(queueGuid, {
+        page: 1,
+        page_size: 1000,
+      }),
+    ]);
+
+    queue = queueData;
+    projectGuid = queueData.review_project_guid || '';
+    projectName =
+      queueData.name ||
+      queueData.collection_name ||
+      'Review project';
+
+    items = (itemData.items || []).map(adaptItem);
+
+    const firstUndecided = items.findIndex(
+      (item) => item.decision === 'undecided'
+    );
+
+    sourceIdx =
+      firstUndecided >= 0
+        ? firstUndecided
+        : Math.max(0, items.length - 1);
+  } catch (error) {
+    console.error(error);
+
+    loadError =
+      error.response?.data?.error ||
+      error.message ||
+      'Could not load this queue.';
+  } finally {
+    loading = false;
+  }
+});
+
+$: src = items[sourceIdx] ?? null;
+
+$: allDone =
+  !loading &&
+  items.length > 0 &&
+  items.every((item) => item.decision !== 'undecided');
+
+$: currentDecision =
+  src && src.decision !== 'undecided'
+    ? {
+        verdict: {
+          keep: 'kept',
+          remove: 'removed',
+          add: 'added',
+          skip: 'skipped',
+        }[src.decision],
+        reason:
+          src.removal_reason ||
+          src.skip_note ||
+          '',
+      }
+    : null;
+
+$: meta = src
+  ? [
+      {
+        k: 'primary_language',
+        label: 'Language',
+        v: src.language,
+      },
+      {
+        k: 'pub_country',
+        label: 'Pub country',
+        v: src.country,
+      },
+      {
+        k: 'pub_state',
+        label: 'Pub state',
+        v: src.state,
+      },
+    ]
+  : [];
+
+  $: counts = {
+  totalKept: items.filter(
+    (item) => item.decision === 'keep'
+  ).length,
+
+  totalRemoved: items.filter(
+    (item) => item.decision === 'remove'
+  ).length,
+
+  totalSkipped: items.filter(
+    (item) => item.decision === 'skip'
+  ).length,
+
+  totalAdded: items.filter(
+    (item) => item.decision === 'add'
+  ).length,
+
+  totalDecided: items.filter(
+    (item) => item.decision !== 'undecided'
+  ).length,
+};
+
+function navigateToSource(index) {
+  sourceIdx = Math.max(
+    0,
+    Math.min(index, items.length - 1)
+  );
+}
+
+function replaceItem(updatedItem) {
+  items = items.map((item) =>
+    item.id === updatedItem.id
+      ? adaptItem(updatedItem)
+      : item
+  );
+}
+
+$: sourceHref = src?.homepage
+  ? /^https?:\/\//i.test(src.homepage)
+    ? src.homepage
+    : `https://${src.homepage}`
+  : '#';
 
   // ── Metadata editing ──────────────────────────────────────────────────────
   let editingField = null;
   let editVal = '';
 
   function startEdit(field) { editingField = field.k; editVal = field.v; }
-  function saveEdit() {
-    if (!src || !editingField) return;
-    saveSourceMeta(src.id, { [editingField]: editVal });
+
+  async function saveEdit() {
+  if (!src || !editingField || saving) return;
+
+  try {
+    saving = true;
+
+    const data = await updateQueueItemSourceMetadata(
+      queueGuid,
+      src.id,
+      {
+        [editingField]: editVal,
+      }
+    );
+
+    replaceItem(data.item);
     editingField = null;
+  } catch (error) {
+    console.error(error);
+
+    loadError =
+      error.response?.data?.error ||
+      error.message ||
+      'Could not update metadata.';
+  } finally {
+    saving = false;
   }
+}
+
   function cancelEdit() { editingField = null; }
 
   let confirmedFields = {};
-  $: if ($reviewState.sourceIdx || $reviewState.sourceIdx === 0) {
-    editingField    = null;
+
+  $: if (sourceIdx || sourceIdx === 0) {
+    editingField = null;
     confirmedFields = {};
   }
 
   function toggleConfirm(k) {
     confirmedFields = { ...confirmedFields, [k]: !confirmedFields[k] };
   }
-  $: isConfirmed = (k) => confirmedFields[k] ?? (k !== 'state');
+
+  $: isConfirmed = (k) => confirmedFields[k] ?? (k !== 'pub_state');
 
   // ── Reason modal (Fix 5) ─────────────────────────────────────────────────
   // Keep and Remove require a reason before committing.
@@ -64,41 +230,142 @@
     reasonText  = '';
   }
 
-  function confirmReason() {
-    if (!reasonCanConfirm) return;
-    const reason = reasonText.trim();
-    const v = reasonModal.pendingVerdict;
-    if (currentDecision !== null) {
-      redecideCurrentSource(v, reason);
-    } else {
-      decideSource(v, reason);
+  async function confirmReason() {
+  if (!reasonCanConfirm || !src || saving) return;
+
+  const reason = reasonText.trim();
+  const decision = reasonModal.pendingVerdict;
+
+  try {
+    saving = true;
+
+    const updatedItem = await decideQueueItem(
+      queueGuid,
+      src.id,
+      decision,
+      decision === 'remove' ? reason : null
+    );
+
+    replaceItem(updatedItem);
+
+    if (sourceIdx < items.length - 1) {
+      sourceIdx += 1;
     }
+
     reasonModal = null;
-    reasonText  = '';
+    reasonText = '';
+  } catch (error) {
+    console.error(error);
+
+    loadError =
+      error.response?.data?.error ||
+      error.message ||
+      'Could not save the decision.';
+  } finally {
+    saving = false;
   }
+}
 
   // ── Decisions ─────────────────────────────────────────────────────────────
   // Keep/Remove open reason modal; Skip is immediate.
-  function keep()   { openReasonModal('keep'); }
-  function remove() { openReasonModal('remove'); }
-  function skip() {
-    if (currentDecision !== null) {
-      redecideCurrentSource('skip', null);
-    } else {
-      decideSource('skip', null);
+ async function keep() {
+  if (!src || saving) return;
+
+  try {
+    saving = true;
+
+    const updatedItem = await decideQueueItem(
+      queueGuid,
+      src.id,
+      'keep'
+    );
+
+    replaceItem(updatedItem);
+
+    if (sourceIdx < items.length - 1) {
+      sourceIdx += 1;
     }
+  } catch (error) {
+    console.error(error);
+
+    loadError =
+      error.response?.data?.error ||
+      error.message ||
+      'Could not save the decision.';
+  } finally {
+    saving = false;
   }
+}
+
+function remove() {
+  openReasonModal('remove');
+}
+
+async function skip() {
+  if (!src || saving) return;
+
+  try {
+    saving = true;
+
+    const updatedItem = await decideQueueItem(
+      queueGuid,
+      src.id,
+      'skip'
+    );
+
+    replaceItem(updatedItem);
+
+    if (sourceIdx < items.length - 1) {
+      sourceIdx += 1;
+    }
+  } catch (error) {
+    console.error(error);
+
+    loadError =
+      error.response?.data?.error ||
+      error.message ||
+      'Could not save the decision.';
+  } finally {
+    saving = false;
+  }
+}
 
   // Keyboard shortcuts
   function onKey(e) {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-    if (allDone || reasonModal) return;
-    if (e.key === 'k' || e.key === 'Enter') keep();
-    if (e.key === 'r') remove();
-    if (e.key === 's') skip();
-    if (e.key === 'ArrowLeft' && $reviewState.sourceIdx > 0) navigateToSource($reviewState.sourceIdx - 1);
-    if (e.key === 'ArrowRight' && $reviewState.sourceIdx < QUEUE_SOURCES.length - 1) navigateToSource($reviewState.sourceIdx + 1);
+  if (
+    e.target.tagName === 'INPUT' ||
+    e.target.tagName === 'TEXTAREA'
+  ) {
+    return;
   }
+
+  if (allDone || reasonModal || saving) {
+    return;
+  }
+
+  if (e.key === 'k' || e.key === 'Enter') {
+    keep();
+  }
+
+  if (e.key === 'r') {
+    remove();
+  }
+
+  if (e.key === 's') {
+    skip();
+  }
+
+  if (e.key === 'ArrowLeft' && sourceIdx > 0) {
+    navigateToSource(sourceIdx - 1);
+  }
+
+  if (
+    e.key === 'ArrowRight' &&
+    sourceIdx < items.length - 1
+  ) {
+    navigateToSource(sourceIdx + 1);
+  }
+}
 
   // ── Propose-new-source modal ──────────────────────────────────────────────
   let showPropose = false;
@@ -106,37 +373,100 @@
   let proposeUrl = '';
   let proposeToast = '';
 
-  function submitPropose() {
-    if (!proposeLabel.trim() || !proposeUrl.trim()) return;
-    proposeSource(proposeLabel.trim(), proposeUrl.trim());
+  async function submitPropose() {
+  if (
+    !proposeLabel.trim() ||
+    !proposeUrl.trim() ||
+    saving
+  ) {
+    return;
+  }
+
+  try {
+    saving = true;
+
+    const createdItem =
+      await proposeNewSourceByQueueGuid(
+        queueGuid,
+        proposeLabel.trim(),
+        proposeUrl.trim()
+      );
+
+    items = [
+      ...items,
+      adaptItem(createdItem)
+    ];
+
     proposeLabel = '';
     proposeUrl = '';
     showPropose = false;
-    proposeToast = 'Source added — it appears in Added.';
-    setTimeout(() => proposeToast = '', 2500);
+    proposeToast =
+      'Source added — it appears in Added.';
+
+    setTimeout(() => {
+      proposeToast = '';
+    }, 2500);
+  } catch (error) {
+    console.error(error);
+
+    loadError =
+      error.response?.data?.error ||
+      error.message ||
+      'Could not add the source.';
+  } finally {
+    saving = false;
   }
+}
 </script>
 
 <svelte:window on:keydown={onKey} />
 
 <div class="review-page">
-  <Nav role="queue" projectCtx="Climate Reporting · US East Coast" projectGuid="proj_8fa221" queueGuid="q1" {onNavigate} variant={navVariant} />
+  <Nav
+  role="queue"
+  projectCtx={projectName}
+  {projectGuid}
+  {queueGuid}
+  {onNavigate}
+  variant={navVariant}
+/>
 
   <!-- ── ALL-DONE STATE ─────────────────────────────────────────────────── -->
-  {#if allDone}
+  {#if loading}
+  <div class="done-wrap">
+    <div class="done-card">
+      Loading review queue...
+    </div>
+  </div>
+
+{:else if loadError}
+  <div class="done-wrap">
+    <div class="done-card">
+      {loadError}
+    </div>
+  </div>
+
+{:else if items.length === 0}
+  <div class="done-wrap">
+    <div class="done-card">
+      This queue has no sources.
+    </div>
+  </div>
+
+{:else if allDone}
     <div class="done-wrap">
       <div class="done-card">
         <div class="done-icon">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5 10 17.5l9-11"/></svg>
         </div>
         <h2 class="done-h2">Queue complete</h2>
-        <p class="done-sub">You've reviewed all {QUEUE_SOURCES.length} sources in this demo session.</p>
+        <p class="done-sub">You've reviewed all {items.length} sources in this demo session.</p>
         <div class="done-tally">
           {#each [
-            { l: 'Kept',    n: $sessionCounts.totalKept,    c: '#E25C40' },
-            { l: 'Removed', n: $sessionCounts.totalRemoved, c: '#1A1C1F' },
-            { l: 'Skipped', n: $sessionCounts.totalSkipped, c: '#9CA0A8' },
-            { l: 'Added',   n: $sessionCounts.totalAdded,   c: '#F5A48A' },
+            { l: 'Kept',    n: counts.totalKept,    c: '#E25C40' },
+            { l: 'Removed', n: counts.totalRemoved, c: '#1A1C1F' },
+            { l: 'Skipped', n: counts.totalSkipped, c: '#9CA0A8' },
+            { l: 'Added',   n: counts.totalAdded,   c: '#F5A48A' },
           ] as t}
             <div class="done-stat">
               <span class="done-dot" style:background={t.c}></span>
@@ -147,11 +477,11 @@
         </div>
         <!-- Fix 2: primary = Back to review at last source; secondary = decisions page -->
         <div class="done-actions">
-          <button class="btn btn-primary" on:click={() => { navigateToSource(QUEUE_SOURCES.length - 1); onNavigate('/demo/reviews/124'); }}>
+          <button class="btn btn-primary" on:click={() => { navigateToSource(items.length - 1);}}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="transform:rotate(180deg)"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
             Back to review
           </button>
-          <button class="btn" on:click={() => onNavigate('/demo/review-projects/proj_8fa221/queues/q1/decisions')}>
+          <button class="btn" on:click={() => onNavigate(`/demo/review-projects/${projectGuid}/queues/${queueGuid}/decisions`)}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2 8l10 5 10-5z"/><path d="m2 14 10 5 10-5M2 11l10 5 10-5"/></svg>
             Check all decisions
           </button>
@@ -163,26 +493,26 @@
     <!-- ── ACTION BAR ──────────────────────────────────────────────────── -->
     <div class="action-bar-wrap">
       <div class="action-bar">
-        <button class="btn btn-sm" on:click={() => onNavigate('/demo/review-projects/proj_8fa221/queues/q1')}>
+        <button class="btn btn-sm" on:click={() => onNavigate(`/demo/review-projects/${projectGuid}/queues/${queueGuid}`)}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="transform:rotate(180deg)"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
           Back to queue
         </button>
         <div class="action-divider"></div>
 
         <div class="progress-pill">
-          <span class="progress-current">{$reviewState.sourceIdx + 1}</span>
-          <span class="progress-sep">/ {QUEUE_SOURCES.length}</span>
+          <span class="progress-current">{sourceIdx + 1}</span>
+          <span class="progress-sep">/ {items.length}</span>
           <div class="progress-mini-track">
-            <div class="progress-mini-fill" style:width="{Math.round(($reviewState.sourceIdx + 1) / QUEUE_SOURCES.length * 100)}%"></div>
+            <div class="progress-mini-fill" style:width="{Math.round((sourceIdx + 1) / items.length * 100)}%"></div>
           </div>
-          <span class="progress-pct-label">{Math.round(($reviewState.sourceIdx + 1) / QUEUE_SOURCES.length * 100)}%</span>
+          <span class="progress-pct-label">{Math.round((sourceIdx + 1) / items.length * 100)}%</span>
         </div>
 
         <div class="action-spacer"></div>
 
-        <button class="btn btn-sm" on:click={() => onNavigate('/demo/review-projects/proj_8fa221/queues/q1/decisions')}>
+        <button class="btn btn-sm" on:click={() => onNavigate(`/demo/review-projects/${projectGuid}/queues/${queueGuid}/decisions`)}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2 8l10 5 10-5z"/><path d="m2 14 10 5 10-5M2 11l10 5 10-5"/></svg>
-          All decisions · {$sessionCounts.totalDecided}
+          All decisions · {counts.totalDecided}
         </button>
         <button class="btn btn-primary btn-sm" on:click={() => showPropose = true}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -216,7 +546,7 @@
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
                   {src.homepage}
                 </span>
-                <a class="source-link" href="https://{src.homepage}" target="_blank" rel="noreferrer">
+                <a class="source-link" href={sourceHref} target="_blank" rel="noreferrer">
                   Review in Media Cloud
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7M9 7h8v8"/></svg>
                 </a>
@@ -228,16 +558,17 @@
             <div class="source-nav">
               <button
                 class="nav-circle"
-                disabled={$reviewState.sourceIdx === 0}
-                on:click={() => navigateToSource($reviewState.sourceIdx - 1)}
+                disabled={sourceIdx === 0}
+                on:click={() => navigateToSource(sourceIdx - 1)}
                 aria-label="Previous source"
               >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
               </button>
+
               <button
                 class="nav-circle"
-                disabled={$reviewState.sourceIdx >= QUEUE_SOURCES.length - 1}
-                on:click={() => navigateToSource($reviewState.sourceIdx + 1)}
+                disabled={sourceIdx >= items.length - 1}
+                on:click={() => navigateToSource(sourceIdx + 1)}
                 aria-label="Next source"
               >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
@@ -289,7 +620,7 @@
         </div>
         <div class="meta-local-note">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg>
-          "Correct" is a session-only toggle — no backend write path exists yet (see BACKEND-GAPS.md). "Edit" writes to mock state.
+          "Correct" is a session-only toggle. "Edit" saves metadata changes to the backend when metadata editing is enabled.
         </div>
 
         <!-- Decision dock -->
@@ -352,10 +683,10 @@
           </div>
           <div class="status-grid">
             {#each [
-              { l: 'kept',    n: $sessionCounts.totalKept,    color: '#E25C40' },
-              { l: 'removed', n: $sessionCounts.totalRemoved, color: '#1A1C1F' },
-              { l: 'skipped', n: $sessionCounts.totalSkipped, color: '#9CA0A8' },
-              { l: 'added',   n: $sessionCounts.totalAdded,   color: '#F5A48A' },
+              { l: 'kept',    n: counts.totalKept,    color: '#E25C40' },
+              { l: 'removed', n: counts.totalRemoved, color: '#1A1C1F' },
+              { l: 'skipped', n: counts.totalSkipped, color: '#9CA0A8' },
+              { l: 'added',   n: counts.totalAdded,   color: '#F5A48A' },
             ] as x}
               <div class="status-cell">
                 <div class="status-label">
@@ -370,7 +701,7 @@
 
         <!-- Source position -->
         <div class="position-note">
-          Source {$reviewState.sourceIdx + 1} of {QUEUE_SOURCES.length} in this demo session
+          Source {sourceIdx + 1} of {items.length} in this queue
         </div>
 
       </div>
