@@ -1,7 +1,13 @@
 <script>
-  import Nav from './Nav.svelte';
-  import { PROJECTS } from './mockData.js';
-  import { decisionsStore, changeDecision } from './mockStore.js';
+  import { onMount } from 'svelte';
+import Nav from './Nav.svelte';
+
+import {
+  getReviewProject,
+  getReviewProjectAllQueueItems,
+  getReviewItemsByQueueGuid,
+  decideQueueItem,
+} from '../../lib/api.js';
 
   export let onNavigate = () => {};
   export let navVariant = 'glass';
@@ -13,30 +19,128 @@
   const isQueueLevel = parts[4] === 'queues';
   const queueGuid = isQueueLevel ? parts[5] : null;
 
-  const p = PROJECTS[projectGuid] ?? null;
-  const q = isQueueLevel && p ? (p.queues.find(qq => qq.guid === queueGuid) ?? null) : null;
+  let p = null;
+let q = null;
+let allDecisions = [];
+let loading = true;
+let loadError = ''; 
 
-  const navRole = isQueueLevel ? 'queue-decisions' : 'all-decisions';
-  const heroTitle = isQueueLevel ? `${q?.id ?? 'Queue'} · Decisions` : 'All Decisions';
+const navRole = isQueueLevel
+  ? 'queue-decisions'
+  : 'all-decisions';
 
-  const VERDICT_COLORS = {
-    kept:    '#E25C40',
-    removed: '#1A1C1F',
-    added:   '#F5A48A',
-    skipped: '#9CA0A8',
+$: heroTitle = isQueueLevel
+  ? `${q?.id ?? 'Queue'} · Decisions`
+  : 'All Decisions';
+
+const VERDICT_COLORS = {
+  kept: '#E25C40',
+  removed: '#1A1C1F',
+  added: '#F5A48A',
+  skipped: '#9CA0A8',
+};
+
+const VERDICT_LABELS = {
+  kept: 'Kept',
+  removed: 'Removed',
+  added: 'Added',
+  skipped: 'Skipped',
+};
+
+const cols = isQueueLevel
+  ? '1.6fr 1.4fr 0.8fr 1fr 52px'
+  : '1.4fr 1.2fr 1fr 0.7fr 1fr 52px';
+
+const VERDICT_FROM_API = {
+  keep: 'kept',
+  remove: 'removed',
+  add: 'added',
+  skip: 'skipped',
+};
+
+function adaptDecision(item, fallbackQueue = null) {
+  const metadata = item.source_metadata ?? {};
+
+  const queueIndex =
+    item.queue_index ??
+    fallbackQueue?.queue_index ??
+    0;
+
+  return {
+    id: item.id,
+    source:
+      item.source_label ||
+      `Source ${item.source_id ?? item.id}`,
+    homepage: item.source_homepage || '',
+    country: metadata.pub_country || '—',
+    verdict: VERDICT_FROM_API[item.decision],
+    reason:
+      item.removal_reason ||
+      item.skip_note ||
+      '',
+    queueGuid:
+      item.queue_guid ||
+      fallbackQueue?.queue_guid ||
+      queueGuid,
+    queue: `Queue #${queueIndex + 1}`,
   };
-  const VERDICT_LABELS = { kept: 'Kept', removed: 'Removed', added: 'Added', skipped: 'Skipped' };
+}
 
-  const cols = isQueueLevel
-    ? '1.6fr 1.4fr 0.8fr 1fr 52px'
-    : '1.4fr 1.2fr 1fr 0.7fr 1fr 52px';
+onMount(async () => {
+  try {
+    const [projectData, itemData] = await Promise.all([
+      getReviewProject(projectGuid),
 
-  // ── Derive decisions from decisionsStore (reactive) ───────────────────
-  $: projDecisions = $decisionsStore[projectGuid] ?? {};
+      isQueueLevel
+        ? getReviewItemsByQueueGuid(queueGuid, {
+            page: 1,
+            page_size: 1000,
+          })
+        : getReviewProjectAllQueueItems(projectGuid, {
+            page: 1,
+            page_size: 8000,
+          }),
+    ]);
 
-  $: allDecisions = isQueueLevel && q
-    ? (projDecisions[q.id] ?? [])
-    : Object.values(projDecisions).flat();
+    p = projectData.project;
+
+    const queues = projectData.queues ?? [];
+
+    if (isQueueLevel) {
+      const queueIndex = queues.findIndex(
+        (queue) => queue.queue_guid === queueGuid
+      );
+
+      if (queueIndex < 0) {
+        throw new Error(
+          'Queue not found for this project.'
+        );
+      }
+
+      q = {
+        ...queues[queueIndex],
+        id: `Queue #${
+          (queues[queueIndex].queue_index ?? queueIndex) + 1
+        }`,
+      };
+    }
+
+    allDecisions = (itemData.items ?? [])
+      .filter(
+        (item) => item.decision !== 'undecided'
+      )
+      .map((item) => adaptDecision(item, q));
+  } catch (error) {
+    console.error(error);
+
+    loadError =
+      error.response?.data?.error ||
+      error.message ||
+      'Could not load decisions.';
+  } finally {
+    loading = false;
+  }
+});
 
   $: counts = allDecisions.reduce((acc, d) => {
     acc[d.verdict] = (acc[d.verdict] || 0) + 1;
@@ -50,28 +154,75 @@
   let changing = null; // { source, queueId, currentVerdict, reason }
   let newVerdict = '';
   let newReason = '';
-  $: reasonRequired = newVerdict === 'kept' || newVerdict === 'removed';
+  $: reasonRequired = newVerdict === 'removed';
   $: canConfirm = newVerdict && (!reasonRequired || newReason.trim());
 
-  function openChange(d) {
-    // Find which queue this source belongs to
-    const queueId = d.queue;
-    changing = { source: d.source, queueId, currentVerdict: d.verdict, reason: d.reason };
-    newVerdict = d.verdict;
-    newReason = d.reason || '';
-  }
+  function openChange(decision) {
+  changing = {
+    id: decision.id,
+    source: decision.source,
+    queueGuid: decision.queueGuid,
+    currentVerdict: decision.verdict,
+    reason: decision.reason,
+  };
+
+  newVerdict = decision.verdict;
+  newReason = decision.reason || '';
+}
 
   function cancelChange() {
     changing = null;
     newReason = '';
   }
 
-  function confirmChange() {
-    if (!canConfirm) return;
-    changeDecision(projectGuid, changing.queueId, changing.source, newVerdict, newReason.trim() || null);
+  async function confirmChange() {
+  if (!canConfirm || !changing) return;
+
+  const DECISION_TO_API = {
+    kept: 'keep',
+    removed: 'remove',
+    added: 'add',
+    skipped: 'skip',
+  };
+
+  const apiDecision = DECISION_TO_API[newVerdict];
+  const reason = newReason.trim();
+
+  try {
+    await decideQueueItem(
+      changing.queueGuid,
+      changing.id,
+      apiDecision,
+      apiDecision === 'remove' ? reason : null,
+      apiDecision === 'skip' ? reason : null
+    );
+
+    allDecisions = allDecisions.map((decision) =>
+      decision.id === changing.id &&
+      decision.queueGuid === changing.queueGuid
+        ? {
+            ...decision,
+            verdict: newVerdict,
+            reason:
+              apiDecision === 'remove' ||
+              apiDecision === 'skip'
+                ? reason
+                : '',
+          }
+        : decision
+    );
+
     changing = null;
     newReason = '';
+  } catch (error) {
+    console.error(error);
+
+    loadError =
+      error.response?.data?.error ||
+      error.message ||
+      'Could not update the decision.';
   }
+}
 </script>
 
 <div class="page">
@@ -143,8 +294,11 @@
           <div></div>
         </div>
         {#each shown as d, i}
-          {@const isChanging = changing?.source === d.source && changing?.queueId === d.queue}
-          {#if isChanging}
+        {@const isChanging =
+          changing?.id === d.id &&
+          changing?.queueGuid === d.queueGuid}
+            
+        {#if isChanging}
             <!-- Inline change form -->
             <div class="change-form" class:first={i === 0}>
               <div class="change-source">
