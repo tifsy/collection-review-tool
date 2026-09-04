@@ -2,6 +2,9 @@
   import Nav from './Nav.svelte';
   import DecisionBar from './DecisionBar.svelte';
   import { reviewState, decisionsStore, changeDecision, saveGuidelines, downloadCSV, loadProject } from './mockStore.js';
+  import {
+  generateReviewProjectQueues
+} from '../../lib/api.js';
   import { get } from 'svelte/store';
   import { onMount } from 'svelte';
 
@@ -29,6 +32,53 @@
       });
   });
 
+  async function handleGenerateQueues() {
+  const parsedQueueCount = Number(queueCount);
+
+  if (
+    !Number.isInteger(parsedQueueCount) ||
+    parsedQueueCount < 1
+  ) {
+    queueGenerateError =
+      'Queue count must be a positive integer.';
+    return;
+  }
+
+  if ((p?.queues?.length ?? 0) > 0) {
+    queueGenerateError =
+      'Reviewer queues have already been generated.';
+    return;
+  }
+
+  try {
+    queueGenerating = true;
+    queueGenerateError = '';
+    queueGenerateWarning = '';
+
+    const result =
+      await generateReviewProjectQueues(
+        projectGuid,
+        parsedQueueCount
+      );
+
+    queueGenerateWarning = result.warning || '';
+
+    // Reload the project so the new queues appear immediately.
+    p = await loadProject(projectGuid);
+
+    showGenerateQueue = false;
+  } catch (error) {
+    console.error(error);
+
+    queueGenerateError =
+      error.response?.data?.error ||
+      error.message ||
+      'Could not generate reviewer queues.';
+  } finally {
+    queueGenerating = false;
+  }
+}
+
   const VERDICT_LABELS  = { kept: 'Kept', removed: 'Removed', added: 'Added', skipped: 'Skipped' };
   const VERDICT_COLORS  = { kept: '#E25C40', removed: '#1A1C1F', added: '#F5A48A', skipped: '#9CA0A8' };
   const DECISION_TILES = [
@@ -52,11 +102,13 @@
   progress: 0
 };
 
-  // Highlighted segment in DecisionBar
   let highlight = null;
-
-  // Settings modal
   let showSettings = false;
+  let showGenerateQueue = false;
+  let queueCount = 1;
+  let queueGenerating = false;
+  let queueGenerateError = '';
+  let queueGenerateWarning = '';
 
   // Decision bucket modal — still backed by mock decision data
   let bucketModal = null;
@@ -245,9 +297,39 @@
     <div class="queues-divider"></div>
     <div class="queues-header">
       <span class="queues-title">Reviewer queues</span>
-      <button class="btn btn-sm">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-        Generate queue
+      <button
+        class="btn btn-sm"
+        disabled={
+          (p?.queues?.length ?? 0) > 0 ||
+          queueGenerating
+        }
+        title={
+          (p?.queues?.length ?? 0) > 0
+            ? 'Reviewer queues have already been generated.'
+            : 'Generate reviewer queues'
+        }
+        on:click={() => {
+          queueCount = 1;
+          queueGenerateError = '';
+          queueGenerateWarning = '';
+          showGenerateQueue = true;
+        }}
+      >
+        <svg
+          width="11"
+          height="11"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+        >
+          <path d="M12 5v14M5 12h14"/>
+        </svg>
+
+        {queueGenerating
+          ? 'Generating...'
+          : 'Generate queues'}
       </button>
     </div>
 
@@ -384,6 +466,124 @@
 <!-- ── SETTINGS MODAL ── -->
 {#if csvToast}
   <div class="toast">{csvToast}</div>
+{/if}
+
+<!-- Queue generating modal -->
+{#if queueGenerateWarning}
+  <div class="toast">
+    {queueGenerateWarning}
+  </div>
+{/if}
+
+{#if showGenerateQueue && p}
+  <div
+    class="modal-overlay"
+    on:click={() => {
+      if (!queueGenerating) {
+        showGenerateQueue = false;
+      }
+    }}
+    role="dialog"
+    aria-modal="true"
+  >
+    <div
+      class="modal"
+      on:click|stopPropagation
+    >
+      <div class="modal-header">
+        <div>
+          <div class="modal-title">
+            Generate reviewer queues
+          </div>
+
+          <div class="modal-subtitle">
+            Split {p.stats.total} sources into reviewer queues.
+          </div>
+        </div>
+
+        <button
+          class="modal-close"
+          disabled={queueGenerating}
+          on:click={() => {
+            showGenerateQueue = false;
+          }}
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+          >
+            <path d="M6 6l12 12M18 6 6 18"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-title">
+              Number of queues
+            </div>
+
+            <div class="setting-desc">
+              Sources will be distributed as evenly as possible.
+            </div>
+          </div>
+
+          <div class="setting-control">
+            <input
+              class="setting-input"
+              type="number"
+              min="1"
+              max={p.stats.total}
+              bind:value={queueCount}
+              disabled={queueGenerating}
+              on:keydown={(event) => {
+                if (event.key === 'Enter') {
+                  handleGenerateQueues();
+                }
+              }}
+            />
+          </div>
+        </div>
+
+        {#if queueGenerateError}
+          <div
+            class="setting-desc"
+            style="color: #b42318; margin-top: 12px;"
+          >
+            {queueGenerateError}
+          </div>
+        {/if}
+      </div>
+
+      <div class="modal-footer">
+        <button
+          class="btn"
+          disabled={queueGenerating}
+          on:click={() => {
+            showGenerateQueue = false;
+          }}
+        >
+          Cancel
+        </button>
+
+        <button
+          class="btn btn-primary"
+          disabled={queueGenerating}
+          on:click={handleGenerateQueues}
+        >
+          {queueGenerating
+            ? 'Generating...'
+            : 'Generate queues'}
+        </button>
+      </div>
+    </div>
+  </div>
 {/if}
 
 {#if showSettings && p}
