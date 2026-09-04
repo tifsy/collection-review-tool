@@ -30,7 +30,7 @@
   $: displayStats = computeStats(qDecisions);
   $: queuePct = q.total > 0 ? Math.round(displayStats.decided / q.total * 100) : 0;
   $: queueTotals = {
-    reviewed: displayStats.decided,
+    decided: displayStats.decided,
     kept: displayStats.kept,
     removed: displayStats.removed,
     added: displayStats.added,
@@ -44,16 +44,16 @@
     const qs  = computeStats(qd);
     return { ...qq, ...qs };
   });
-  $: projectDone  = projectQueues.reduce((s, qq) => s + qq.decided, 0);
+  $: projectDecided  = projectQueues.reduce((s, qq) => s + qq.decided, 0);
   $: projectTotal = p.queues.reduce((s, qq) => s + qq.total, 0);
-  $: projectPct   = projectTotal > 0 ? Math.round(projectDone / projectTotal * 100) : 0;
+  $: projectPct   = projectTotal > 0 ? Math.round(projectDecided / projectTotal * 100) : 0;
   $: projectStats = projectQueues.reduce((s, qq) => ({
     kept:    s.kept    + (qq.kept    ?? 0),
     removed: s.removed + (qq.removed ?? 0),
     added:   s.added   + (qq.added   ?? 0),
     skipped: s.skipped + (qq.skipped ?? 0),
   }), { kept: 0, removed: 0, added: 0, skipped: 0 });
-  $: projectUndecided = Math.max(0, projectTotal - projectDone);
+  $: projectUndecided = Math.max(0, projectTotal - projectDecided);
 
   const DECISION_TILES = [
     { k: 'kept',    label: 'Kept',    color: '#E25C40' },
@@ -199,7 +199,7 @@
       <div class="status-header">
         <span class="card-title">Project-wide status</span>
         <span class="card-header-right">
-          {projectDone.toLocaleString()} / {projectTotal.toLocaleString()} sources · {projectPct}%
+          {projectDecided.toLocaleString()} / {projectTotal.toLocaleString()} sources · {projectPct}%
         </span>
       </div>
       <div class="project-totals">
