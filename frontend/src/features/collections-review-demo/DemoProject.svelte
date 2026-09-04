@@ -1,9 +1,14 @@
 <script>
   import Nav from './Nav.svelte';
   import DecisionBar from './DecisionBar.svelte';
-  import { reviewState, decisionsStore, changeDecision, saveGuidelines, downloadCSV, loadProject } from './mockStore.js';
+  import {  decisionsStore, changeDecision, downloadCSV, loadProject } from './mockStore.js';
   import {
-  generateReviewProjectQueues
+  generateReviewProjectQueues,
+  setReviewProjectName,
+  getReviewProjectGuidelines,
+  setReviewProjectGuidelines,
+  setReviewProjectReviewerLandingVirtualQueues,
+  setReviewProjectEditMetadata
 } from '../../lib/api.js';
   import { get } from 'svelte/store';
   import { onMount } from 'svelte';
@@ -163,13 +168,121 @@
   }
 
   // ── Guidelines modal ───────────────────────────────────────────────────
-  let localGuidelines = get(reviewState).guidelines;
+  
+  // ── Project settings ──
+  let settingsName = '';
+  let localGuidelines = '';
+  let settingsShowVirtualQueueLinks = true;
+  let settingsEditMetadata = false;
+
+  let settingsLoading = false;
+  let settingsSaving = false;
+  let settingsError = '';
   let guidelinesSaved = false;
-  function handleSaveSettings() {
-    saveGuidelines(localGuidelines);
-    guidelinesSaved = true;
-    setTimeout(() => { guidelinesSaved = false; showSettings = false; }, 1200);
+
+  async function openProjectSettings() {
+  if (!p) return;
+
+  settingsName = p.name;
+  settingsShowVirtualQueueLinks =
+    p.showVirtualQueueLinks;
+  settingsEditMetadata =
+    p.editMetadata;
+
+  localGuidelines = '';
+  settingsError = '';
+  guidelinesSaved = false;
+  settingsLoading = true;
+  showSettings = true;
+
+  try {
+    const result =
+      await getReviewProjectGuidelines(
+        projectGuid
+      );
+
+    localGuidelines =
+      result.guidelines || '';
+  } catch (error) {
+    console.error(error);
+
+    settingsError =
+      error.response?.data?.error ||
+      error.message ||
+      'Could not load project settings.';
+  } finally {
+    settingsLoading = false;
   }
+}
+  
+  async function handleSaveSettings() {
+  const trimmedName = settingsName.trim();
+  const trimmedGuidelines =
+    localGuidelines.trim();
+
+  if (!trimmedName) {
+    settingsError =
+      'Project name is required.';
+    return;
+  }
+
+  if (!trimmedGuidelines) {
+    settingsError =
+      'Annotation guidelines cannot be empty.';
+    return;
+  }
+
+  if (settingsSaving || settingsLoading) {
+    return;
+  }
+
+  try {
+    settingsSaving = true;
+    settingsError = '';
+    guidelinesSaved = false;
+
+    await Promise.all([
+      setReviewProjectName(
+        projectGuid,
+        trimmedName
+      ),
+
+      setReviewProjectGuidelines(
+        projectGuid,
+        trimmedGuidelines
+      ),
+
+      setReviewProjectReviewerLandingVirtualQueues(
+        projectGuid,
+        settingsShowVirtualQueueLinks
+      ),
+
+      setReviewProjectEditMetadata(
+        projectGuid,
+        settingsEditMetadata
+      ),
+    ]);
+
+    // Reload the page data with the saved settings.
+    p = await loadProject(projectGuid);
+
+    guidelinesSaved = true;
+
+    setTimeout(() => {
+      guidelinesSaved = false;
+      showSettings = false;
+    }, 1200);
+  } catch (error) {
+    console.error(error);
+
+    settingsError =
+      error.response?.data?.error ||
+      error.message ||
+      'Could not save project settings.';
+  } finally {
+    settingsSaving = false;
+  }
+}
 </script>
 
 <div class="project-page">
@@ -179,7 +292,11 @@
     {projectGuid}
     {onNavigate}
     variant={navVariant}
-    onTab={(t) => { if (t === 'Settings' && p) showSettings = true; }}
+    onTab={(tab) => {
+  if (tab === 'Settings') {
+    openProjectSettings();
+  }
+}}
   />
 
   {#if p}
@@ -400,7 +517,16 @@
 
 <!-- ── BUCKET MODAL (Fix 4) ── -->
 {#if bucketModal}
-  <div class="modal-overlay" on:click={() => { bucketModal = null; bucketChangeTarget = null; }} role="dialog" aria-modal="true">
+  <div
+  class="modal-overlay"
+  on:click={() => {
+    if (!settingsSaving) {
+      showSettings = false;
+    }
+  }}
+  role="dialog"
+  aria-modal="true"
+>
     <div class="modal" on:click|stopPropagation>
       <div class="modal-header">
         <div>
@@ -523,6 +649,26 @@
       </div>
 
       <div class="modal-body">
+
+        {#if settingsLoading}
+          <div
+            class="setting-desc"
+            style="margin-bottom: 12px;"
+          >
+            Loading project settings...
+          </div>
+        {/if}
+
+        {#if settingsError}
+          <div
+            class="setting-desc"
+            style="color: #b42318; margin-bottom: 12px;"
+            role="alert"
+          >
+            {settingsError}
+          </div>
+        {/if}
+
         <div class="setting-row">
           <div class="setting-info">
             <div class="setting-title">
@@ -594,7 +740,15 @@
           <div class="modal-title">Project settings</div>
           <div class="modal-subtitle">Change what reviewers see or whether they can edit source metadata.</div>
         </div>
-        <button class="modal-close" on:click={() => showSettings = false}>
+        <button
+          class="modal-close"
+          disabled={settingsSaving}
+          on:click={() => {
+            if (!settingsSaving) {
+              showSettings = false;
+            }
+          }}
+        >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
         </button>
       </div>
@@ -605,7 +759,7 @@
             <div class="setting-desc">Display name used across admin and reviewer views.</div>
           </div>
           <div class="setting-control">
-            <input class="setting-input" type="text" value={p ? p.name : ''} />
+            <input class="setting-input" type="text" bind:value={settingsName} disabled={settingsLoading || settingsSaving} />
           </div>
         </div>
         <div class="setting-row">
@@ -614,7 +768,12 @@
             <div class="setting-desc">Markdown shown to reviewers while they work.</div>
           </div>
           <div class="setting-control">
-            <textarea class="setting-textarea" rows="5" bind:value={localGuidelines}></textarea>
+            <textarea
+              class="setting-textarea"
+              rows="5"
+              bind:value={localGuidelines}
+              disabled={settingsLoading || settingsSaving}
+            ></textarea>
           </div>
         </div>
         <div class="setting-row setting-row-toggle">
@@ -622,20 +781,79 @@
             <div class="setting-title">Reviewer landing: project virtual queues</div>
             <div class="setting-desc">Show project-wide virtual-queue links on reviewer landing pages.</div>
           </div>
-          <div class="toggle toggle-on"><div class="toggle-knob toggle-knob-on"></div></div>
+          <button
+            type="button"
+            class="toggle"
+            class:toggle-on={settingsShowVirtualQueueLinks}
+            class:toggle-off={!settingsShowVirtualQueueLinks}
+            disabled={settingsLoading || settingsSaving}
+            aria-pressed={settingsShowVirtualQueueLinks}
+            aria-label="Show project virtual queue links"
+            on:click={() => {
+              settingsShowVirtualQueueLinks =
+                !settingsShowVirtualQueueLinks;
+            }}
+          >
+            <div
+              class="toggle-knob"
+              class:toggle-knob-on={
+                settingsShowVirtualQueueLinks
+              }
+            ></div>
+          </button>
         </div>
         <div class="setting-row setting-row-toggle">
           <div class="setting-info">
             <div class="setting-title">Source metadata editing</div>
             <div class="setting-desc">Require reviewers to confirm language and country/state before keeping.</div>
           </div>
-          <div class="toggle toggle-off"><div class="toggle-knob"></div></div>
+          <button
+            type="button"
+            class="toggle"
+            class:toggle-on={settingsEditMetadata}
+            class:toggle-off={!settingsEditMetadata}
+            disabled={settingsLoading || settingsSaving}
+            aria-pressed={settingsEditMetadata}
+            aria-label="Allow source metadata editing"
+            on:click={() => {
+              settingsEditMetadata =
+                !settingsEditMetadata;
+            }}
+          >
+            <div
+              class="toggle-knob"
+              class:toggle-knob-on={settingsEditMetadata}
+            ></div>
+          </button>
         </div>
       </div>
       <div class="modal-footer">
         {#if guidelinesSaved}<span class="saved-note">Saved ✓</span>{/if}
-        <button class="btn" on:click={() => showSettings = false}>Cancel</button>
-        <button class="btn btn-primary" on:click={handleSaveSettings}>Save changes</button>
+        <button
+          class="btn"
+          disabled={settingsSaving}
+          on:click={() => {
+            if (!settingsSaving) {
+              showSettings = false;
+            }
+          }}
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-primary"
+          disabled={
+            settingsLoading ||
+            settingsSaving ||
+            !settingsName.trim() ||
+            !localGuidelines.trim()
+          }
+          on:click={handleSaveSettings}
+        >
+          {settingsSaving
+            ? 'Saving...'
+            : 'Save changes'}
+        </button>
       </div>
     </div>
   </div>
@@ -807,7 +1025,7 @@
   .setting-control { margin-top: 10px; width: 100%; box-sizing: border-box; }
   .setting-input { width: 100%; box-sizing: border-box; border: 1px solid var(--v2-line); border-radius: 10px; padding: 10px 12px; font-size: 14px; font-family: var(--v2-sans); color: var(--v2-ink); outline: none; }
   .setting-textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--v2-line); border-radius: 10px; padding: 10px 12px; font-size: 13.5px; font-family: var(--v2-mono); color: var(--v2-body); outline: none; resize: vertical; line-height: 1.5; }
-  .toggle { width: 34px; height: 20px; border-radius: 999px; position: relative; cursor: pointer; flex-shrink: 0; margin-top: 2px; }
+  .toggle { width: 34px; height: 20px; border-radius: 999px; position: relative; cursor: pointer; flex-shrink: 0; margin-top: 2px; border: 0; padding: 0;}
   .toggle-off { background: var(--v2-line-soft); }
   .toggle-on  { background: var(--v2-accent); }
   .toggle-knob { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; background: #fff; border-radius: 50%; box-shadow: 0 1px 2px rgba(0,0,0,.18); }
