@@ -3,7 +3,10 @@
   import Nav from './Nav.svelte';
   import Modal from './Modal.svelte';
   import HelpModal from './HelpModal.svelte';
-  import { projectsStore, inProgressProjects, completedProjects, KNOWN_COLLECTIONS, addProject } from './mockStore.js';
+  import { projectsStore, inProgressProjects, completedProjects, KNOWN_COLLECTIONS, loadProjects } from './mockStore.js';
+import {
+  startReviewProject
+} from '../../lib/api.js';
 
   export let onNavigate = () => {};
   export let navVariant = 'glass';
@@ -52,7 +55,12 @@
     if (qrResolved) onNavigate('/demo/reviews/124');
   }
 
-  onMount(() => { qrTimer = setTimeout(stepAuto, 500); });
+  onMount(() => { qrTimer = setTimeout(stepAuto, 500); 
+
+    loadProjects().catch((error) => {
+      console.error('Failed to load projects'), error
+    })
+  });
   onDestroy(() => clearTimeout(qrTimer));
 
   /* ── Metadata toggle ── */
@@ -68,6 +76,8 @@
   let newCollectionSource = 'manual'; // 'manual' | 'geographic'
   let newCollectionIds = '';
   let newCountry = '';
+  let newProjectCreating = false;
+  let newProjectError = ''; 
 
   const GUIDELINE_TEMPLATES = [
     { value: 'default',   label: 'Default (keep reliable local reporting)' },
@@ -77,20 +87,101 @@
   ];
   const COUNTRIES = ['United States', 'Brazil', 'United Kingdom', 'Germany', 'France', 'India', 'Mexico', 'Nigeria', 'Kenya', 'South Africa'];
 
-  function submitNewProject() {
-    if (!newProjectName.trim()) return;
-    const seeds = newCollectionSource === 'manual'
-      ? newCollectionIds.split(',').map(s => s.trim()).filter(Boolean)
-      : newCountry ? [newCountry] : [];
-    addProject(newProjectName.trim(), seeds);
+  function openNewProjectModal() {
+  newProjectName = '';
+  newGuidelineTemplate = 'default';
+  newCollectionSource = 'manual';
+  newCollectionIds = '';
+  newCountry = '';
+  newProjectError = '';
+  newProjectCreating = false;
+
+  showNewProject = true;
+}
+
+  async function submitNewProject() {
+  if (newProjectCreating) return;
+
+  const projectName = newProjectName.trim();
+
+  if (!projectName) {
+    newProjectError =
+      'Project name is required.';
+    return;
+  }
+
+  if (newCollectionSource !== 'manual') {
+    newProjectError =
+      'Geographic collection selection is not connected yet.';
+    return;
+  }
+
+  const rawCollectionIds = newCollectionIds
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  if (rawCollectionIds.length === 0) {
+    newProjectError =
+      'Enter at least one collection ID.';
+    return;
+  }
+
+  const collectionIds = rawCollectionIds.map(
+    (value) => Number(value)
+  );
+
+  const hasInvalidCollectionId =
+    collectionIds.some(
+      (id) =>
+        !Number.isInteger(id) ||
+        id <= 0
+    );
+
+  if (hasInvalidCollectionId) {
+    newProjectError =
+      'Collection IDs must be positive integers.';
+    return;
+  }
+
+  const uniqueCollectionIds = [
+    ...new Set(collectionIds)
+  ];
+
+  try {
+    newProjectCreating = true;
+    newProjectError = '';
+
+    const result = await startReviewProject(
+      uniqueCollectionIds,
+      newGuidelineTemplate,
+      false,
+      projectName
+    );
+
+    await loadProjects();
+
     showNewProject = false;
     newProjectName = '';
     newCollectionIds = '';
     newCountry = '';
     newCollectionSource = 'manual';
     newGuidelineTemplate = 'default';
-    onNavigate('/demo/review-projects/proj_8fa221');
+
+    onNavigate(
+      `/demo/review-projects/${result.project.guid}`
+    );
+  } catch (error) {
+    console.error(error);
+
+    newProjectError =
+      error.response?.data?.error ||
+      error.message ||
+      'Could not create the project.';
+  } finally {
+    newProjectCreating = false;
   }
+}
 
   /* ── Projects pagination (10 per page, newest first) ── */
   let projectsPage = 0;
@@ -231,7 +322,7 @@
       <h2 class="section-title">Review projects</h2>
     </div>
     <div class="section-header-actions">
-      <button class="btn" on:click={() => showNewProject = true}>
+      <button class="btn" on:click={openNewProjectModal}>
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
         New project
       </button>
@@ -360,7 +451,7 @@
 <HelpModal show={showHelp} role="admin" on:close={() => showHelp = false} />
 
 <!-- New project -->
-<Modal show={showNewProject} title="Start review project" on:close={() => showNewProject = false}>
+<Modal show={showNewProject} title="Start review project" on:close={() => {if(!newProjectCreating) showNewProject = false}}>
   <p class="modal-subtitle">Seed a multi-collection project into reviewer queues.</p>
   <form class="modal-form" on:submit|preventDefault={submitNewProject}>
 
@@ -396,9 +487,9 @@
           </div>
         </label>
         <label class="radio-option" class:radio-selected={newCollectionSource === 'geographic'}>
-          <input type="radio" bind:group={newCollectionSource} value="geographic" />
+          <input type="radio" bind:group={newCollectionSource} value="geographic" disabled/>
           <div class="radio-text">
-            <span class="radio-label">Geographic (MediaCloud country list)</span>
+            <span class="radio-label">Geographic collection section will be connected later</span>
             <span class="radio-hint">Select a country to seed from its top-online list</span>
           </div>
         </label>
@@ -429,14 +520,42 @@
       </div>
     {/if}
 
+    {#if newProjectError}
+  <div
+    class="form-hint"
+    style="color: #b42318;"
+    role="alert"
+  >
+    {newProjectError}
+  </div>
+{/if}
+
     <button
-      class="btn btn-primary btn-full"
-      type="submit"
-      disabled={!newProjectName.trim()}
-    >
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-      Start review project
-    </button>
+  class="btn btn-primary btn-full"
+  type="submit"
+  disabled={
+    newProjectCreating ||
+    !newProjectName.trim() ||
+    !newCollectionIds.trim() ||
+    newCollectionSource !== 'manual'
+  }
+>
+  <svg
+    width="13"
+    height="13"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="1.8"
+    stroke-linecap="round"
+  >
+    <path d="M12 5v14M5 12h14"/>
+  </svg>
+
+  {newProjectCreating
+    ? 'Creating project...'
+    : 'Start review project'}
+</button>
   </form>
 </Modal>
 
