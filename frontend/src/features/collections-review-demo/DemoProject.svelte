@@ -1,19 +1,23 @@
 <script>
   import { onMount } from 'svelte';
-  import { get } from 'svelte/store';
 
   import {
+    decideQueueItem,
     generateReviewProjectQueues,
+    getAddedItemsByProjectGuid,
+    getKeptItemsByProjectGuid,
+    getRemovedItemsByProjectGuid,
     getReviewProjectAuditExportUrl,
     getReviewProjectExportUrl,
     getReviewProjectGuidelines,
+    getSkippedItemsByProjectGuid,
     setReviewProjectEditMetadata,
     setReviewProjectGuidelines,
     setReviewProjectName,
     setReviewProjectReviewerLandingVirtualQueues,
   } from '../../lib/api.js';
   import DecisionBar from './DecisionBar.svelte';
-  import { changeDecision, decisionsStore, loadProject } from './mockStore.js';
+  import { loadProject } from './mockStore.js';
   import Nav from './Nav.svelte';
 
   export let onNavigate = () => {};
@@ -86,9 +90,6 @@
     { k: 'skipped', label: 'Skipped', color: '#9CA0A8' },
   ];
 
-  // ── Compute all stats from decisionsStore ─────────────────────────────
-  $: projectDecisions = $decisionsStore[projectGuid] ?? {};
-
   $: projectStats = p?.stats ?? {
     kept: 0,
     removed: 0,
@@ -108,51 +109,110 @@
   let queueGenerateError = '';
   let queueGenerateWarning = '';
 
-  // Decision bucket modal — still backed by mock decision data
-  let bucketModal = null;
+  const BUCKET_LOADERS = {
+    kept: getKeptItemsByProjectGuid,
+    removed: getRemovedItemsByProjectGuid,
+    added: getAddedItemsByProjectGuid,
+    skipped: getSkippedItemsByProjectGuid,
+  };
 
-  function openBucket(verdict) {
-    const sources = p.queues.flatMap((queue) =>
-      (projectDecisions[queue.id] ?? []).filter((decision) => decision.verdict === verdict)
-    );
-    bucketModal = { verdict, sources };
+  const DECISION_TO_API = {
+    kept: 'keep',
+    removed: 'remove',
+    added: 'add',
+    skipped: 'skip',
+  };
+
+  function adaptBucketItem(item, verdict) {
+    const queueIndex = item.queue_index ?? 0;
+
+    return {
+      id: item.id,
+      source: item.source_label || `Source ${item.source_id ?? item.id}`,
+      homepage: item.source_homepage || '',
+      verdict,
+      queueGuid: item.queue_guid,
+      queue: `Queue #${queueIndex + 1}`,
+      reason: item.removal_reason || item.skip_note || '',
+    };
+  }
+
+  let bucketModal = null;
+  let bucketLoading = false;
+  let bucketError = '';
+  let bucketSaving = false;
+
+  async function loadBucketSources(verdict) {
+    const data = await BUCKET_LOADERS[verdict](projectGuid, {
+      page: 1,
+      page_size: 8000,
+      dedupe_source_id: true,
+    });
+    return (data.items ?? []).map((item) => adaptBucketItem(item, verdict));
+  }
+
+  async function openBucket(verdict) {
+    bucketModal = { verdict, sources: [] };
+    bucketChangeTarget = null;
+    bucketReason = '';
+    bucketLoading = true;
+    bucketError = '';
+
+    try {
+      bucketModal = { verdict, sources: await loadBucketSources(verdict) };
+    } catch (error) {
+      console.error(error);
+      bucketError = error.response?.data?.error || error.message || 'Could not load this bucket.';
+    } finally {
+      bucketLoading = false;
+    }
   }
   // Change decision from inside bucket modal
-  let bucketChangeTarget = null; // { source, queueId }
+  let bucketChangeTarget = null; // { id, source, queueGuid }
   let bucketNewVerdict = '';
   let bucketReason = '';
 
-  $: bucketReasonRequired = bucketNewVerdict === 'kept' || bucketNewVerdict === 'removed';
-  $: bucketCanConfirm = bucketNewVerdict && (!bucketReasonRequired || bucketReason.trim());
+  $: bucketReasonRequired = bucketNewVerdict === 'removed';
+  $: bucketCanConfirm =
+    bucketNewVerdict && !bucketSaving && (!bucketReasonRequired || bucketReason.trim());
 
   function openBucketChange(d) {
-    // find which queue this source belongs to
-    const queueId = d.queue;
-    bucketChangeTarget = { source: d.source, queueId };
+    bucketChangeTarget = { id: d.id, source: d.source, queueGuid: d.queueGuid };
     bucketNewVerdict = d.verdict;
     bucketReason = d.reason || '';
   }
 
-  function confirmBucketChange() {
+  async function confirmBucketChange() {
     if (!bucketCanConfirm) return;
-    changeDecision(
-      projectGuid,
-      bucketChangeTarget.queueId,
-      bucketChangeTarget.source,
-      bucketNewVerdict,
-      bucketReason.trim() || null
-    );
-    // refresh modal sources
-    bucketModal = {
-      ...bucketModal,
-      sources: p.queues.flatMap((q) =>
-        (get(decisionsStore)[projectGuid]?.[q.id] ?? []).filter(
-          (d) => d.verdict === bucketModal.verdict
-        )
-      ),
-    };
-    bucketChangeTarget = null;
-    bucketReason = '';
+
+    const apiDecision = DECISION_TO_API[bucketNewVerdict];
+    const reason = bucketReason.trim();
+
+    try {
+      bucketSaving = true;
+      bucketError = '';
+
+      await decideQueueItem(
+        bucketChangeTarget.queueGuid,
+        bucketChangeTarget.id,
+        apiDecision,
+        apiDecision === 'remove' ? reason : null,
+        apiDecision === 'skip' ? reason : null
+      );
+
+      p = await loadProject(projectGuid);
+      bucketModal = {
+        ...bucketModal,
+        sources: await loadBucketSources(bucketModal.verdict),
+      };
+      bucketChangeTarget = null;
+      bucketReason = '';
+    } catch (error) {
+      console.error(error);
+      bucketError = error.response?.data?.error || error.message || 'Could not update decision.';
+    } finally {
+      bucketSaving = false;
+    }
   }
 
   // ── Copy reviewer link ─────────────────────────────────────────────────
@@ -635,7 +695,7 @@
         <div>
           <div class="modal-title" style:color={VERDICT_COLORS[bucketModal.verdict]}>
             {VERDICT_LABELS[bucketModal.verdict]}
-            <span class="modal-count">{bucketModal.sources.length}</span>
+            <span class="modal-count">{projectStats[bucketModal.verdict]}</span>
           </div>
           <div class="modal-subtitle">{p.name}</div>
         </div>
@@ -658,7 +718,11 @@
         </button>
       </div>
 
-      {#if bucketModal.sources.length === 0}
+      {#if bucketError}
+        <div class="bucket-empty">{bucketError}</div>
+      {:else if bucketLoading}
+        <div class="bucket-empty">Loading sources...</div>
+      {:else if bucketModal.sources.length === 0}
         <div class="bucket-empty">No sources in this bucket yet.</div>
       {:else}
         <div class="bucket-list">
@@ -701,7 +765,8 @@
                     <button
                       class="btn btn-sm btn-primary"
                       class:btn-dim={!bucketCanConfirm}
-                      on:click={confirmBucketChange}>Save</button
+                      disabled={!bucketCanConfirm}
+                      on:click={confirmBucketChange}>{bucketSaving ? 'Saving...' : 'Save'}</button
                     >
                   </div>
                 </div>
