@@ -1,17 +1,20 @@
 <script>
-  import Nav from './Nav.svelte';
-  import DecisionBar from './DecisionBar.svelte';
-  import { decisionsStore, changeDecision, downloadCSV, loadProject } from './mockStore.js';
+  import { onMount } from 'svelte';
+  import { get } from 'svelte/store';
+
   import {
     generateReviewProjectQueues,
-    setReviewProjectName,
+    getReviewProjectAuditExportUrl,
+    getReviewProjectExportUrl,
     getReviewProjectGuidelines,
-    setReviewProjectGuidelines,
-    setReviewProjectReviewerLandingVirtualQueues,
     setReviewProjectEditMetadata,
+    setReviewProjectGuidelines,
+    setReviewProjectName,
+    setReviewProjectReviewerLandingVirtualQueues,
   } from '../../lib/api.js';
-  import { get } from 'svelte/store';
-  import { onMount } from 'svelte';
+  import DecisionBar from './DecisionBar.svelte';
+  import { changeDecision, decisionsStore, loadProject } from './mockStore.js';
+  import Nav from './Nav.svelte';
 
   export let onNavigate = () => {};
   export let navVariant = 'glass';
@@ -163,7 +166,15 @@
   // ── Export CSV ─────────────────────────────────────────────────────────
   let csvToast = '';
   function exportCSV(type) {
-    downloadCSV(type);
+    const href =
+      type === 'audit'
+        ? getReviewProjectAuditExportUrl(projectGuid)
+        : getReviewProjectExportUrl(projectGuid);
+    const link = document.createElement('a');
+    link.href = href;
+    link.download = '';
+    link.click();
+
     csvToast = type === 'audit' ? 'Audit CSV downloaded' : 'Project CSV downloaded';
     setTimeout(() => (csvToast = ''), 2000);
   }
