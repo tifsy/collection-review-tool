@@ -10,7 +10,7 @@
     KNOWN_COLLECTIONS,
     loadProjects,
   } from './mockStore.js';
-  import { startReviewProject } from '../../lib/api.js';
+  import { startReviewProject, generateReviewProjectQueues } from '../../lib/api.js';
 
   export let onNavigate = () => {};
   export let navVariant = 'glass';
@@ -24,15 +24,18 @@
   let qrIdx = 0;
   let qrTimer = null;
   let qrStarted = false; // shows "not found" feedback after pressing Start
+  let qrStarting = false;
+  let qrError = '';
 
   $: qrInfo = KNOWN_COLLECTIONS[qrId] || null;
   $: qrResolved = !!qrInfo;
-  $: qrNotFound = qrId.length === 8 && !qrInfo;
+  $: qrCollectionId = Number(qrId);
+  $: qrHasValidId = Number.isInteger(qrCollectionId) && qrCollectionId > 0;
   $: qrShowAuto = !qrFocused && qrId === '';
   $: qrDisplay = qrShowAuto ? qrAuto : qrId;
   $: qrBorderColor = qrResolved
     ? 'var(--v2-kept)'
-    : qrNotFound || (qrStarted && !qrResolved)
+    : qrError || (qrStarted && !qrHasValidId)
       ? 'var(--v2-red)'
       : 'var(--v2-line)';
 
@@ -60,13 +63,52 @@
     qrTimer = setTimeout(stepAuto, 300);
   }
   function onQrType(e) {
-    qrId = e.target.value.replace(/[^0-9]/g, '').slice(0, 8);
+    qrId = e.target.value.replace(/[^0-9]/g, '');
     qrStarted = false;
+    qrError = '';
   }
 
-  function startReview() {
+  async function startReview() {
+    if (qrStarting) return;
     qrStarted = true;
-    if (qrResolved) onNavigate('/demo/reviews/124');
+    qrError = '';
+
+    if (!qrHasValidId) {
+      qrError = 'Enter a valid collection ID.';
+      return;
+    }
+
+    try {
+      qrStarting = true;
+
+      const projectName = qrInfo
+        ? `Quick Review · ${qrInfo.name}`
+        : `Quick Review · Collection ${qrCollectionId}`;
+
+      const projectResult = await startReviewProject(
+        [qrCollectionId],
+        'default',
+        metadataEditing,
+        projectName
+      );
+      const queueResult = await generateReviewProjectQueues(projectResult.project.guid, 1);
+      const queueGuid = queueResult.queues?.[0]?.queue_guid || queueResult.queues?.[0]?.guid;
+
+      if (!queueGuid) {
+        throw new Error('The reviewer queue was created without a queue GUID.');
+      }
+
+      await loadProjects();
+
+      onNavigate(`/demo/reviews/${queueGuid}`);
+    } catch (error) {
+      console.error(error);
+
+      qrError =
+        error.response?.data?.error || error.message || 'Could not start the quick review.';
+    } finally {
+      qrStarting = false;
+    }
   }
 
   onMount(() => {
@@ -288,8 +330,8 @@
                 Found
               </span>
             {/if}
-            {#if qrNotFound || (qrStarted && !qrResolved && qrId.length > 0)}
-              <span class="qrc-not-found">Not found</span>
+            {#if qrError}
+              <span class="qrc-not-found">Error</span>
             {/if}
           </div>
 
@@ -333,11 +375,12 @@
         <!-- Card footer -->
         <div class="qrc-footer">
           <span class="qrc-footer-hint">
-            {#if qrResolved}Queue starts with ~{qrInfo.sources} sources{:else if qrStarted && !qrResolved && qrId.length > 0}<span
-                class="hint-err">Collection not found — try a different ID</span
+            {#if qrError}<span class="hint-err">{qrError}</span
+              >{:else if qrStarting}Creating review queue...{:else if qrResolved}Queue starts with ~{qrInfo.sources} sources{:else if qrStarted && !qrHasValidId}<span
+                class="hint-err">Enter a valid collection ID</span
               >{:else}&nbsp;{/if}
           </span>
-          <button class="btn btn-primary" on:click={startReview}>
+          <button class="btn btn-primary" disabled={qrStarting} on:click={startReview}>
             <svg
               width="13"
               height="13"
@@ -348,7 +391,7 @@
               stroke-linecap="round"
               stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6" /></svg
             >
-            Start review
+            {qrStarting ? 'Starting...' : 'Start review'}
           </button>
         </div>
       </div>
