@@ -10,7 +10,7 @@
     KNOWN_COLLECTIONS,
     loadProjects,
   } from './mockStore.js';
-  import { startReviewProject, generateReviewProjectQueues } from '../../lib/api.js';
+  import { startReviewProject, generateReviewProjectQueues, getCountryCollections } from '../../lib/api.js';
 
   export let onNavigate = () => {};
   export let navVariant = 'glass';
@@ -133,6 +133,10 @@
   let newCollectionSource = 'manual'; // 'manual' | 'geographic'
   let newCollectionIds = '';
   let newCountry = '';
+  let countryCollections = [];
+  let countryCollectionsLoading = false;
+  let countryCollectionsError = '';
+  let selectedCountryCollectionIds = [];
   let newProjectCreating = false;
   let newProjectError = '';
 
@@ -142,18 +146,91 @@
     { value: 'local', label: 'Local news' },
     { value: 'ai-sweep', label: 'AI content review' },
   ];
-  const COUNTRIES = [
-    'United States',
-    'Brazil',
-    'United Kingdom',
-    'Germany',
-    'France',
-    'India',
-    'Mexico',
-    'Nigeria',
-    'Kenya',
-    'South Africa',
-  ];
+  $: selectedCountryEntry =
+    countryCollections.find((entry) => countryOptionValue(entry) === newCountry) || null;
+  $: canSubmitNewProject =
+    newProjectName.trim() &&
+    (newCollectionSource === 'manual'
+      ? newCollectionIds.trim()
+      : selectedCountryCollectionIds.length > 0 &&
+        !countryCollectionsLoading &&
+        !countryCollectionsError);
+
+  function countryOptionValue(entry) {
+    return entry?.country?.alpha3 || entry?.country?.alpha2 || entry?.country?.name || '';
+  }
+
+  async function loadCountryCollectionOptions() {
+    if (countryCollectionsLoading) return;
+
+    if (countryCollections.length > 0) {
+      if (!newCountry) {
+        newCountry = countryOptionValue(countryCollections[0]);
+        applyDefaultCountryCollectionSelection();
+      }
+      return;
+    }
+
+    countryCollectionsLoading = true;
+    countryCollectionsError = '';
+
+    try {
+      const data = await getCountryCollections();
+
+      if (!Array.isArray(data)) {
+        throw new Error('Invalid geographic collections data.');
+      }
+
+      countryCollections = [...data].sort((a, b) =>
+        String(a?.country?.name || '').localeCompare(String(b?.country?.name || ''), undefined, {
+          sensitivity: 'base',
+        })
+      );
+
+      if (!newCountry && countryCollections.length > 0) {
+        newCountry = countryOptionValue(countryCollections[0]);
+        applyDefaultCountryCollectionSelection();
+      }
+    } catch (error) {
+      console.error(error);
+      countryCollections = [];
+      countryCollectionsError =
+        error.response?.data?.error || error.message || 'Could not load geographic collections.';
+    } finally {
+      countryCollectionsLoading = false;
+    }
+  }
+
+  function applyDefaultCountryCollectionSelection() {
+    const entry =
+      countryCollections.find((countryEntry) => countryOptionValue(countryEntry) === newCountry) ||
+      null;
+
+    if (!entry?.collections?.length) {
+      selectedCountryCollectionIds = [];
+      return;
+    }
+
+    const collectionIds = entry.collections.map((collection) => collection.tags_id);
+    const nationalCollectionId = entry.country?.national_tags_id;
+
+    selectedCountryCollectionIds =
+      nationalCollectionId != null && collectionIds.includes(nationalCollectionId)
+        ? [nationalCollectionId]
+        : [collectionIds[0]];
+  }
+
+  function onCountryChange() {
+    applyDefaultCountryCollectionSelection();
+  }
+
+  function toggleCountryCollection(collectionId) {
+    if (selectedCountryCollectionIds.includes(collectionId)) {
+      selectedCountryCollectionIds = selectedCountryCollectionIds.filter((id) => id !== collectionId);
+    } else {
+      selectedCountryCollectionIds = [...selectedCountryCollectionIds, collectionId];
+    }
+  }
 
   function openNewProjectModal() {
     newProjectName = '';
@@ -161,10 +238,12 @@
     newCollectionSource = 'manual';
     newCollectionIds = '';
     newCountry = '';
+    selectedCountryCollectionIds = [];
     newProjectError = '';
     newProjectCreating = false;
 
     showNewProject = true;
+    loadCountryCollectionOptions();
   }
 
   async function submitNewProject() {
@@ -177,31 +256,47 @@
       return;
     }
 
-    if (newCollectionSource !== 'manual') {
-      newProjectError = 'Geographic collection selection is not connected yet.';
-      return;
+    let uniqueCollectionIds = [];
+
+    if (newCollectionSource === 'manual') {
+      const rawCollectionIds = newCollectionIds
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean);
+
+      if (rawCollectionIds.length === 0) {
+        newProjectError = 'Enter at least one collection ID.';
+        return;
+      }
+
+      const collectionIds = rawCollectionIds.map((value) => Number(value));
+
+      const hasInvalidCollectionId = collectionIds.some((id) => !Number.isInteger(id) || id <= 0);
+
+      if (hasInvalidCollectionId) {
+        newProjectError = 'Collection IDs must be positive integers.';
+        return;
+      }
+
+      uniqueCollectionIds = [...new Set(collectionIds)];
+    } else {
+      if (countryCollectionsLoading) {
+        newProjectError = 'Geographic collections are still loading.';
+        return;
+      }
+
+      if (countryCollectionsError || countryCollections.length === 0) {
+        newProjectError = 'Geographic collections could not be loaded.';
+        return;
+      }
+
+      if (!newCountry || selectedCountryCollectionIds.length === 0) {
+        newProjectError = 'Select at least one geographic collection.';
+        return;
+      }
+
+      uniqueCollectionIds = [...new Set(selectedCountryCollectionIds)];
     }
-
-    const rawCollectionIds = newCollectionIds
-      .split(',')
-      .map((value) => value.trim())
-      .filter(Boolean);
-
-    if (rawCollectionIds.length === 0) {
-      newProjectError = 'Enter at least one collection ID.';
-      return;
-    }
-
-    const collectionIds = rawCollectionIds.map((value) => Number(value));
-
-    const hasInvalidCollectionId = collectionIds.some((id) => !Number.isInteger(id) || id <= 0);
-
-    if (hasInvalidCollectionId) {
-      newProjectError = 'Collection IDs must be positive integers.';
-      return;
-    }
-
-    const uniqueCollectionIds = [...new Set(collectionIds)];
 
     try {
       newProjectCreating = true;
@@ -220,6 +315,7 @@
       newProjectName = '';
       newCollectionIds = '';
       newCountry = '';
+      selectedCountryCollectionIds = [];
       newCollectionSource = 'manual';
       newGuidelineTemplate = 'default';
 
@@ -633,9 +729,14 @@
           </div>
         </label>
         <label class="radio-option" class:radio-selected={newCollectionSource === 'geographic'}>
-          <input type="radio" bind:group={newCollectionSource} value="geographic" disabled />
+          <input
+            type="radio"
+            bind:group={newCollectionSource}
+            value="geographic"
+            on:change={loadCountryCollectionOptions}
+          />
           <div class="radio-text">
-            <span class="radio-label">Geographic collection section will be connected later</span>
+            <span class="radio-label">Geographic collections</span>
             <span class="radio-hint">Select a country to seed from its top-online list</span>
           </div>
         </label>
@@ -657,12 +758,44 @@
     {:else}
       <div class="form-field">
         <label class="form-label" for="proj-country">Country</label>
-        <select id="proj-country" class="form-select" bind:value={newCountry}>
-          <option value="">Select a country…</option>
-          {#each COUNTRIES as c}
-            <option value={c}>{c}</option>
-          {/each}
-        </select>
+        {#if countryCollectionsLoading}
+          <div class="form-hint">Loading geographic collections…</div>
+        {:else if countryCollectionsError}
+          <div class="form-hint" style="color: #b42318;">{countryCollectionsError}</div>
+          <button class="btn btn-sm" type="button" on:click={loadCountryCollectionOptions}>
+            Retry
+          </button>
+        {:else}
+          <select
+            id="proj-country"
+            class="form-select"
+            bind:value={newCountry}
+            on:change={onCountryChange}
+          >
+            <option value="">Select a country…</option>
+            {#each countryCollections as entry}
+              <option value={countryOptionValue(entry)}>{entry.country?.name || 'Unknown'}</option>
+            {/each}
+          </select>
+          {#if selectedCountryEntry}
+            <div class="form-hint">
+              Choose one or more geographic collections for {selectedCountryEntry.country?.name}.
+            </div>
+            <div class="geo-collections-list">
+              {#each selectedCountryEntry.collections || [] as collection}
+                <label class="geo-check">
+                  <input
+                    type="checkbox"
+                    checked={selectedCountryCollectionIds.includes(collection.tags_id)}
+                    on:change={() => toggleCountryCollection(collection.tags_id)}
+                  />
+                  <span class="geo-check-label">{collection.label}</span>
+                  <span class="geo-tag-id">{collection.tags_id}</span>
+                </label>
+              {/each}
+            </div>
+          {/if}
+        {/if}
       </div>
     {/if}
 
@@ -675,10 +808,7 @@
     <button
       class="btn btn-primary btn-full"
       type="submit"
-      disabled={newProjectCreating ||
-        !newProjectName.trim() ||
-        !newCollectionIds.trim() ||
-        newCollectionSource !== 'manual'}
+      disabled={newProjectCreating || !canSubmitNewProject}
     >
       <svg
         width="13"
@@ -1494,6 +1624,41 @@
   }
   .radio-hint {
     font-size: 13px;
+    color: var(--v2-mute);
+  }
+
+  .geo-collections-list {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    max-height: 220px;
+    overflow: auto;
+    padding: 2px 2px 2px 0;
+  }
+  .geo-check {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 9px 10px;
+    border: 1px solid var(--v2-line-soft, #f0f0f0);
+    border-radius: 8px;
+    cursor: pointer;
+    background: #fff;
+  }
+  .geo-check input[type='checkbox'] {
+    accent-color: var(--v2-accent);
+    flex-shrink: 0;
+  }
+  .geo-check-label {
+    flex: 1;
+    min-width: 0;
+    font-size: 13.5px;
+    color: var(--v2-ink);
+  }
+  .geo-tag-id {
+    font-family: var(--v2-mono);
+    font-size: 12px;
     color: var(--v2-mute);
   }
 
