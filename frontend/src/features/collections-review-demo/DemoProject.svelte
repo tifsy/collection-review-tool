@@ -11,6 +11,7 @@
     getReviewProjectExportUrl,
     getReviewProjectGuidelines,
     getSkippedItemsByProjectGuid,
+    previewPublishReviewProject,
     setReviewProjectEditMetadata,
     setReviewProjectGuidelines,
     setReviewProjectName,
@@ -239,6 +240,63 @@
     setTimeout(() => (csvToast = ''), 2000);
   }
 
+  // ── Publish preview ───────────────────────────────────────────────────
+  let showPublishPreview = false;
+  let publishPreviewToken = '';
+  let publishPreviewCollectionName = '';
+  let publishPreviewLoading = false;
+  let publishPreviewError = '';
+  let publishPreviewResult = null;
+
+  $: publishPreviewRows = publishPreviewResult?.preview?.rows ?? [];
+  $: publishPreviewSummary = publishPreviewResult?.preview?.summary ?? null;
+  $: publishPreviewTarget = publishPreviewResult?.target ?? null;
+
+  function openPublishPreview() {
+    publishPreviewError = '';
+    publishPreviewResult = null;
+    publishPreviewCollectionName =
+      publishPreviewCollectionName || `${(p?.name || 'Review Project').trim()} | Collection-Review`;
+    showPublishPreview = true;
+  }
+
+  async function handlePublishPreview() {
+    const apiToken = publishPreviewToken.trim();
+
+    if (!apiToken) {
+      publishPreviewError = 'API token is required.';
+      return;
+    }
+
+    try {
+      publishPreviewLoading = true;
+      publishPreviewError = '';
+      publishPreviewResult = null;
+
+      const payload = { api_token: apiToken };
+      const collectionName = publishPreviewCollectionName.trim();
+
+      if (collectionName) {
+        payload.collection_name = collectionName;
+      }
+
+      publishPreviewResult = await previewPublishReviewProject(projectGuid, payload);
+    } catch (error) {
+      console.error(error);
+      publishPreviewError =
+        error.response?.data?.error || error.message || 'Could not preview publish.';
+    } finally {
+      publishPreviewLoading = false;
+    }
+  }
+
+  function operationLabel(operation) {
+    if (operation === 'ensure_association') return 'Ensure in collection';
+    if (operation === 'create_source_and_associate') return 'Create source';
+    if (operation === 'remove_association') return 'Remove from collection';
+    return operation || '—';
+  }
+
   // ── Guidelines modal ───────────────────────────────────────────────────
 
   // ── Project settings ──
@@ -401,7 +459,7 @@
             >
             Audit CSV
           </button>
-          <button class="btn">
+          <button class="btn" on:click={openPublishPreview}>
             <svg
               width="13"
               height="13"
@@ -890,6 +948,164 @@
 
         <button class="btn btn-primary" disabled={queueGenerating} on:click={handleGenerateQueues}>
           {queueGenerating ? 'Generating...' : 'Generate queues'}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if showPublishPreview && p}
+  <div
+    class="modal-overlay"
+    role="dialog"
+    aria-modal="true"
+  >
+    <div class="modal modal-wide">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title">Preview publish</div>
+          <div class="modal-subtitle">
+            Build a read-only Media Cloud publish plan for {p.name}.
+          </div>
+        </div>
+        <button
+          class="modal-close"
+          disabled={publishPreviewLoading}
+          on:click={() => {
+            if (!publishPreviewLoading) {
+              showPublishPreview = false;
+            }
+          }}
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg
+          >
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-title">Media Cloud API token</div>
+            <div class="setting-desc">Used only for preview preflight. This does not publish.</div>
+          </div>
+          <div class="setting-control">
+            <input
+              class="setting-input"
+              type="password"
+              bind:value={publishPreviewToken}
+              disabled={publishPreviewLoading}
+              autocomplete="off"
+            />
+          </div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="setting-title">Collection name</div>
+            <div class="setting-desc">Optional name for a first-time publish target.</div>
+          </div>
+          <div class="setting-control">
+            <input
+              class="setting-input"
+              type="text"
+              bind:value={publishPreviewCollectionName}
+              disabled={publishPreviewLoading}
+            />
+          </div>
+        </div>
+
+        {#if publishPreviewError}
+          <div class="preview-error">{publishPreviewError}</div>
+        {/if}
+
+        {#if publishPreviewSummary}
+          <div class="preview-summary">
+            <div class="preview-summary-item">
+              <span class="preview-summary-label">Target</span>
+              <span class="preview-summary-value">
+                {publishPreviewTarget?.collection_id
+                  ? `Collection ${publishPreviewTarget.collection_id}`
+                  : publishPreviewTarget?.collection_name || 'New collection'}
+              </span>
+            </div>
+            <div class="preview-summary-item">
+              <span class="preview-summary-label">Actions</span>
+              <span class="preview-summary-value">{publishPreviewRows.length}</span>
+            </div>
+            <div class="preview-summary-item">
+              <span class="preview-summary-label">Keep/add</span>
+              <span class="preview-summary-value"
+                >{(publishPreviewSummary.ensure_association || 0) +
+                  (publishPreviewSummary.create_source_and_associate || 0)}</span
+              >
+            </div>
+            <div class="preview-summary-item">
+              <span class="preview-summary-label">Remove</span>
+              <span class="preview-summary-value"
+                >{publishPreviewSummary.remove_association || 0}</span
+              >
+            </div>
+          </div>
+
+          {#if publishPreviewRows.length === 0}
+            <div class="bucket-empty">No publish actions in this preview.</div>
+          {:else}
+            <div class="preview-table-wrap">
+              <table class="preview-table">
+                <thead>
+                  <tr>
+                    <th>Action</th>
+                    <th>Source</th>
+                    <th>Decision</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each publishPreviewRows.slice(0, 12) as row}
+                    <tr>
+                      <td>{operationLabel(row.operation)}</td>
+                      <td>
+                        <div class="preview-source">{row.source_label || row.source_homepage}</div>
+                        <div class="preview-source-sub">{row.source_homepage || row.source_id}</div>
+                      </td>
+                      <td>{row.decision}</td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+              {#if publishPreviewRows.length > 12}
+                <div class="setting-desc" style="margin-top: 8px;">
+                  Showing first 12 of {publishPreviewRows.length} publish actions.
+                </div>
+              {/if}
+            </div>
+          {/if}
+        {/if}
+      </div>
+
+      <div class="modal-footer">
+        <button
+          class="btn"
+          disabled={publishPreviewLoading}
+          on:click={() => {
+            if (!publishPreviewLoading) {
+              showPublishPreview = false;
+            }
+          }}
+        >
+          Close
+        </button>
+        <button
+          class="btn btn-primary"
+          disabled={publishPreviewLoading || !publishPreviewToken.trim()}
+          on:click={handlePublishPreview}
+        >
+          {publishPreviewLoading ? 'Previewing...' : 'Preview publish'}
         </button>
       </div>
     </div>
@@ -1540,6 +1756,9 @@
     overflow: hidden;
     flex-shrink: 0;
   }
+  .modal-wide {
+    max-width: 920px;
+  }
   .modal-header {
     padding: 18px 24px;
     border-bottom: 1px solid var(--v2-line-soft);
@@ -1590,6 +1809,82 @@
     align-items: center;
     justify-content: flex-end;
     gap: 10px;
+  }
+  .preview-error {
+    margin-top: 12px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: #fff1f0;
+    color: #b42318;
+    font-size: 13.5px;
+  }
+  .preview-summary {
+    margin-top: 16px;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    border: 1px solid var(--v2-line);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .preview-summary-item {
+    padding: 12px;
+    border-right: 1px solid var(--v2-line-soft);
+    min-width: 0;
+  }
+  .preview-summary-item:last-child {
+    border-right: none;
+  }
+  .preview-summary-label {
+    display: block;
+    font-size: 12px;
+    color: var(--v2-mute);
+    margin-bottom: 4px;
+  }
+  .preview-summary-value {
+    display: block;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--v2-ink);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .preview-table-wrap {
+    margin-top: 14px;
+    border: 1px solid var(--v2-line);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .preview-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13.5px;
+  }
+  .preview-table th,
+  .preview-table td {
+    padding: 10px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--v2-line-soft);
+    vertical-align: top;
+  }
+  .preview-table th {
+    font-size: 12px;
+    color: var(--v2-mute);
+    font-weight: 600;
+    background: var(--v2-neutral);
+  }
+  .preview-table tr:last-child td {
+    border-bottom: none;
+  }
+  .preview-source {
+    font-weight: 600;
+    color: var(--v2-ink);
+  }
+  .preview-source-sub {
+    margin-top: 2px;
+    font-size: 12px;
+    color: var(--v2-mute);
+    word-break: break-all;
   }
   .saved-note {
     margin-right: auto;
