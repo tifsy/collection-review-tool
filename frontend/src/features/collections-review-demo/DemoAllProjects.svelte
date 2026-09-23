@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import Nav from './Nav.svelte';
-  import { projectsStore, loadProjects } from './mockStore.js';
+  import { projectsStore, loadProjects } from './projectStore.js';
 
   export let onNavigate = () => {};
   export let navVariant = 'glass';

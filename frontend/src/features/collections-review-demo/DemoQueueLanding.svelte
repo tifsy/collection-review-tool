@@ -1,7 +1,7 @@
 <script>
   import Nav from './Nav.svelte';
   import DecisionBar from './DecisionBar.svelte';
-  import { loadProject } from './mockStore.js';
+  import { loadProject } from './projectStore.js';
   import { getReviewItemsByQueueGuid, decideQueueItem } from '../../lib/api.js';
   import { onMount } from 'svelte';
 

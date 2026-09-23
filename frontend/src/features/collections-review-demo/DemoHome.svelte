@@ -1,5 +1,5 @@
 <script>
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
   import Nav from './Nav.svelte';
   import Modal from './Modal.svelte';
   import HelpModal from './HelpModal.svelte';
@@ -7,61 +7,26 @@
     projectsStore,
     inProgressProjects,
     completedProjects,
-    KNOWN_COLLECTIONS,
     loadProjects,
-  } from './mockStore.js';
+  } from './projectStore.js';
   import { startReviewProject, generateReviewProjectQueues, getCountryCollections } from '../../lib/api.js';
 
   export let onNavigate = () => {};
   export let navVariant = 'glass';
 
   /* ── QuickReviewCard state ── */
-  const SAMPLES = ['34412803', '29571100', '18204455', '42119007'];
 
   let qrId = '';
-  let qrFocused = false;
-  let qrAuto = '';
-  let qrIdx = 0;
-  let qrTimer = null;
   let qrStarted = false; // shows "not found" feedback after pressing Start
   let qrStarting = false;
   let qrError = '';
 
-  $: qrInfo = KNOWN_COLLECTIONS[qrId] || null;
-  $: qrResolved = !!qrInfo;
   $: qrCollectionId = Number(qrId);
   $: qrHasValidId = Number.isInteger(qrCollectionId) && qrCollectionId > 0;
-  $: qrShowAuto = !qrFocused && qrId === '';
-  $: qrDisplay = qrShowAuto ? qrAuto : qrId;
-  $: qrBorderColor = qrResolved
-    ? 'var(--v2-kept)'
-    : qrError || (qrStarted && !qrHasValidId)
+  $: qrBorderColor = qrError || (qrStarted && !qrHasValidId)
       ? 'var(--v2-red)'
       : 'var(--v2-line)';
 
-  function stepAuto() {
-    if (qrFocused || qrId !== '') return;
-    const sample = SAMPLES[qrIdx];
-    if (qrAuto.length < sample.length) {
-      qrAuto = sample.slice(0, qrAuto.length + 1);
-      qrTimer = setTimeout(stepAuto, 160);
-    } else {
-      qrTimer = setTimeout(() => {
-        qrAuto = '';
-        qrIdx = (qrIdx + 1) % SAMPLES.length;
-        stepAuto();
-      }, 1700);
-    }
-  }
-
-  function onQrFocus() {
-    qrFocused = true;
-    clearTimeout(qrTimer);
-  }
-  function onQrBlur() {
-    qrFocused = false;
-    qrTimer = setTimeout(stepAuto, 300);
-  }
   function onQrType(e) {
     qrId = e.target.value.replace(/[^0-9]/g, '');
     qrStarted = false;
@@ -81,9 +46,7 @@
     try {
       qrStarting = true;
 
-      const projectName = qrInfo
-        ? `Quick Review · ${qrInfo.name}`
-        : `Quick Review · Collection ${qrCollectionId}`;
+      const projectName = `Quick Review · Collection ${qrCollectionId}`;
 
       const projectResult = await startReviewProject(
         [qrCollectionId],
@@ -112,13 +75,11 @@
   }
 
   onMount(() => {
-    qrTimer = setTimeout(stepAuto, 500);
 
     loadProjects().catch((error) => {
       console.error('Failed to load projects'), error;
     });
   });
-  onDestroy(() => clearTimeout(qrTimer));
 
   /* ── Metadata toggle ── */
   let metadataEditing = false;
@@ -396,56 +357,18 @@
             <div class="qrc-input-inner">
               <input
                 class="qrc-input"
-                class:auto={qrShowAuto}
-                value={qrDisplay}
+                value={qrId}
                 inputmode="numeric"
                 placeholder="paste a collection ID…"
-                on:focus={onQrFocus}
-                on:blur={onQrBlur}
                 on:input={onQrType}
               />
-              {#if qrShowAuto}
-                <span class="qrc-caret" style:left="calc({qrDisplay.length}ch + 2px)"></span>
-              {/if}
             </div>
 
-            {#if qrResolved}
-              <span class="qrc-found">
-                <span class="qrc-found-dot">
-                  <svg
-                    width="11"
-                    height="11"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"><path d="M5 12.5 10 17.5l9-11" /></svg
-                  >
-                </span>
-                Found
-              </span>
-            {/if}
             {#if qrError}
               <span class="qrc-not-found">Error</span>
             {/if}
           </div>
 
-          <!-- Resolved confirmation panel -->
-          <div class="qrc-confirm" class:visible={qrResolved}>
-            {#if qrInfo}
-              <div class="qrc-confirm-inner">
-                <div>
-                  <div class="qrc-confirm-name">{qrInfo.name}</div>
-                  <div class="qrc-confirm-sub">Collection found · ready to queue</div>
-                </div>
-                <div class="qrc-confirm-count">
-                  <div class="qrc-confirm-num">~{qrInfo.sources}</div>
-                  <div class="qrc-confirm-unit">sources</div>
-                </div>
-              </div>
-            {/if}
-          </div>
         </div>
 
         <!-- Options row -->
@@ -472,7 +395,7 @@
         <div class="qrc-footer">
           <span class="qrc-footer-hint">
             {#if qrError}<span class="hint-err">{qrError}</span
-              >{:else if qrStarting}Creating review queue...{:else if qrResolved}Queue starts with ~{qrInfo.sources} sources{:else if qrStarted && !qrHasValidId}<span
+              >{:else if qrStarting}Creating review queue...{:else if qrStarted && !qrHasValidId}<span
                 class="hint-err">Enter a valid collection ID</span
               >{:else}&nbsp;{/if}
           </span>
@@ -1054,42 +977,7 @@
     color: var(--v2-ink);
     letter-spacing: -0.3px;
   }
-  .qrc-input.auto {
-    color: var(--v2-mute);
-  }
-  .qrc-caret {
-    position: absolute;
-    top: 0.18em;
-    width: 2px;
-    height: 1.2em;
-    background: var(--v2-ink);
-    animation: blink 1s step-end infinite;
-  }
-  @keyframes blink {
-    50% {
-      opacity: 0;
-    }
-  }
 
-  .qrc-found {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 14px;
-    color: var(--v2-kept);
-    font-weight: 600;
-    white-space: nowrap;
-  }
-  .qrc-found-dot {
-    width: 17px;
-    height: 17px;
-    border-radius: 50%;
-    background: var(--v2-kept);
-    color: #fff;
-    display: grid;
-    place-items: center;
-    flex-shrink: 0;
-  }
   .qrc-not-found {
     font-size: 14px;
     color: var(--v2-red);
@@ -1097,57 +985,6 @@
     white-space: nowrap;
   }
 
-  .qrc-confirm {
-    overflow: hidden;
-    max-height: 0;
-    opacity: 0;
-    margin-top: 0;
-    transition:
-      max-height 0.35s ease,
-      opacity 0.35s ease,
-      margin 0.35s ease;
-  }
-  .qrc-confirm.visible {
-    max-height: 70px;
-    opacity: 1;
-    margin-top: 10px;
-  }
-  .qrc-confirm-inner {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 11px 14px;
-    background: var(--v2-kept-soft);
-    border: 1px solid rgba(226, 92, 64, 0.2);
-    border-radius: 12px;
-  }
-  .qrc-confirm-name {
-    font-size: 13.5px;
-    font-weight: 600;
-    color: var(--v2-ink);
-  }
-  .qrc-confirm-sub {
-    font-size: 13.5px;
-    color: var(--v2-accent-ink);
-    margin-top: 1px;
-  }
-  .qrc-confirm-count {
-    text-align: right;
-  }
-  .qrc-confirm-num {
-    font-size: 14px;
-    font-weight: 600;
-    font-family: var(--v2-mono);
-    letter-spacing: -0.5px;
-    color: var(--v2-ink);
-  }
-  .qrc-confirm-unit {
-    font-size: 12.5px;
-    color: var(--v2-mute);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    font-weight: 500;
-  }
 
   .qrc-options {
     padding: 12px 22px 4px;

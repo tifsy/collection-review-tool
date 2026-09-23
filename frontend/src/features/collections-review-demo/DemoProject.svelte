@@ -19,7 +19,7 @@
     setReviewProjectReviewerLandingVirtualQueues,
   } from '../../lib/api.js';
   import DecisionBar from './DecisionBar.svelte';
-  import { loadProject } from './mockStore.js';
+  import { loadProject } from './projectStore.js';
   import Nav from './Nav.svelte';
 
   export let onNavigate = () => {};
