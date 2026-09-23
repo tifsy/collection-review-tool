@@ -1,7 +1,37 @@
 <script>
+  import { onMount } from 'svelte';
+  import { getReviewProject, getReviewProjects } from '../../lib/api.js';
+
   export let onNavigate = () => {};
 
-  const ROLES = [
+  let project = null;
+  let queueGuid = null;
+  let loading = true;
+  let loadError = '';
+
+  onMount(() => {
+    loadEntryTargets();
+  });
+
+  async function loadEntryTargets() {
+    try {
+      const projects = (await getReviewProjects()).filter((entry) => entry.guid);
+      project = projects.find((entry) => entry.queues_count > 0) || projects[0] || null;
+      if (project) {
+        const details = await getReviewProject(project.guid);
+        const queue = (details.queues ?? []).find((entry) => entry.queue_guid || entry.guid);
+        queueGuid = queue?.queue_guid || queue?.guid || null;
+      }
+    } catch {
+      loadError = project ? 'Could not load reviewer queues.' : 'Could not load projects.';
+    } finally {
+      loading = false;
+    }
+  }
+
+  $: unavailable = loading ? 'Loading projects and queues...' : loadError || (project ? 'No reviewer queues available.' : 'No review projects available.');
+
+  $: ROLES = [
     {
       label: 'Project Manager',
       desc: 'Creates projects, generates reviewer queues, monitors progress, exports results.',
@@ -13,8 +43,8 @@
         },
         {
           title: 'Project Admin',
-          sub: 'Climate Reporting · US East Coast',
-          path: '/demo/review-projects/proj_8fa221',
+          sub: project ? project.name : unavailable,
+          path: project ? `/demo/review-projects/${project.guid}` : null,
         },
       ],
     },
@@ -24,13 +54,13 @@
       screens: [
         {
           title: 'Queue Landing',
-          sub: 'Invitation + your queue overview',
-          path: '/demo/review-projects/proj_8fa221/queues/q1',
+          sub: queueGuid ? 'Invitation + your queue overview' : unavailable,
+          path: queueGuid ? `/demo/review-projects/${project.guid}/queues/${queueGuid}` : null,
         },
         {
           title: 'Review screen',
-          sub: 'One source at a time — decide and advance',
-          path: '/demo/reviews/124',
+          sub: queueGuid ? 'One source at a time — decide and advance' : unavailable,
+          path: queueGuid ? `/demo/reviews/${queueGuid}` : null,
         },
       ],
     },
@@ -43,8 +73,7 @@
       <div class="eyebrow">V2 redesign · demo</div>
       <h1 class="index-h1">Collections Review Portal</h1>
       <p class="index-sub">
-        Prototype running on mock data — no backend required. Choose a role below to enter the
-        interface.
+        Choose a role below to enter the interface.
       </p>
     </div>
 
@@ -57,7 +86,7 @@
           </div>
           <div class="screens-list">
             {#each role.screens as s}
-              <button class="screen-card" on:click={() => onNavigate(s.path)}>
+              <button class="screen-card" disabled={!s.path} on:click={() => s.path && onNavigate(s.path)}>
                 <div class="screen-card-left">
                   <div class="screen-title">{s.title}</div>
                   <div class="screen-sub">{s.sub}</div>
@@ -84,9 +113,13 @@
 
     <div class="index-footer">
       <span class="footer-note">
-        All data is mocked. See
-        <code>BACKEND-GAPS.md</code>
-        for what needs backend work before production.
+        {#if project}
+          Selected project: {project.name}
+        {:else if loading || loadError}
+          {unavailable}
+        {:else}
+          Create a review project in General Admin to get started.
+        {/if}
       </span>
     </div>
   </div>
@@ -209,7 +242,11 @@
       box-shadow 0.18s;
     box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02);
   }
-  .screen-card:hover {
+  .screen-card:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+  .screen-card:hover:enabled {
     border-color: var(--v2-accent);
     box-shadow: 0 0 0 3px var(--v2-accent-soft);
   }
@@ -228,7 +265,7 @@
     color: var(--v2-mute);
     flex-shrink: 0;
   }
-  .screen-card:hover .screen-arrow {
+  .screen-card:hover:enabled .screen-arrow {
     color: var(--v2-accent);
   }
 
@@ -240,12 +277,5 @@
   .footer-note {
     font-size: 13px;
     color: var(--v2-mute);
-  }
-  .footer-note code {
-    font-family: var(--v2-mono);
-    background: var(--v2-neutral);
-    padding: 2px 6px;
-    border-radius: 4px;
-    font-size: 12px;
   }
 </style>

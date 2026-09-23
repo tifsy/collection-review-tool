@@ -42,7 +42,7 @@
 <main>
   {#if currentPath === '/'}
     <RootStatic />
-  {:else if currentPath === '/demo' && DEMO_ON}
+  {:else if (currentPath === '/demo' || currentPath === '/demo/') && DEMO_ON}
     <DemoShell><DemoIndex onNavigate={navigate} /></DemoShell>
   {:else if currentPath === '/demo/manage' && DEMO_ON}
     <DemoShell><DemoHome onNavigate={navigate} navVariant="glass" /></DemoShell>
