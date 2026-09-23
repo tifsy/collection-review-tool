@@ -12,6 +12,7 @@
     getReviewProjectGuidelines,
     getSkippedItemsByProjectGuid,
     previewPublishReviewProject,
+    publishReviewProject,
     setReviewProjectEditMetadata,
     setReviewProjectGuidelines,
     setReviewProjectName,
@@ -247,17 +248,57 @@
   let publishPreviewLoading = false;
   let publishPreviewError = '';
   let publishPreviewResult = null;
+  let publishMode = false;
+  let publishResult = null;
 
   $: publishPreviewRows = publishPreviewResult?.preview?.rows ?? [];
   $: publishPreviewSummary = publishPreviewResult?.preview?.summary ?? null;
   $: publishPreviewTarget = publishPreviewResult?.target ?? null;
 
   function openPublishPreview() {
+    publishMode = false;
     publishPreviewError = '';
     publishPreviewResult = null;
     publishPreviewCollectionName =
       publishPreviewCollectionName || `${(p?.name || 'Review Project').trim()} | Collection-Review`;
     showPublishPreview = true;
+  }
+
+  function openPublish() {
+    if (publishPreviewLoading) return;
+    openPublishPreview();
+    publishMode = true;
+    publishResult = null;
+  }
+
+  async function handlePublish() {
+    if (publishPreviewLoading || publishResult) return;
+    const apiToken = publishPreviewToken.trim();
+    if (!apiToken) {
+      publishPreviewError = 'API token is required.';
+      return;
+    }
+
+    publishPreviewLoading = true;
+    publishPreviewError = '';
+    try {
+      const payload = { api_token: apiToken };
+      const collectionName = publishPreviewCollectionName.trim();
+      if (collectionName) {
+        payload.collection_name = collectionName;
+      }
+      publishResult = await publishReviewProject(projectGuid, payload);
+    } catch (error) {
+      const message = error.response?.data?.error || 'Could not confirm publishing. The operation may have partially completed. Check the target collection before retrying.';
+      publishPreviewError = String(message).split(apiToken).join('[redacted]');
+    } finally {
+      publishPreviewLoading = false;
+    }
+  }
+
+  function publishMessage(message) {
+    const token = publishPreviewToken.trim();
+    return token ? String(message).split(token).join('[redacted]') : String(message);
   }
 
   async function handlePublishPreview() {
@@ -477,7 +518,7 @@
             >
             Preview publish
           </button>
-          <button class="btn btn-primary">
+          <button class="btn btn-primary" on:click={openPublish} disabled={publishPreviewLoading}>
             <svg
               width="13"
               height="13"
@@ -963,9 +1004,13 @@
     <div class="modal modal-wide">
       <div class="modal-header">
         <div>
-          <div class="modal-title">Preview publish</div>
+          <div class="modal-title">{publishMode ? 'Publish' : 'Preview publish'}</div>
           <div class="modal-subtitle">
-            Build a read-only Media Cloud publish plan for {p.name}.
+            {#if publishMode}
+              Publish decisions for {p.name} to Media Cloud. A new collection is created if no publish target exists.
+            {:else}
+              Build a read-only Media Cloud publish plan for {p.name}.
+            {/if}
           </div>
         </div>
         <button
@@ -993,14 +1038,14 @@
         <div class="setting-row">
           <div class="setting-info">
             <div class="setting-title">Media Cloud API token</div>
-            <div class="setting-desc">Used only for preview preflight. This does not publish.</div>
+            <div class="setting-desc">{publishMode ? 'Used to publish to Media Cloud.' : 'Used only for preview preflight. This does not publish.'}</div>
           </div>
           <div class="setting-control">
             <input
               class="setting-input"
               type="password"
               bind:value={publishPreviewToken}
-              disabled={publishPreviewLoading}
+              disabled={publishPreviewLoading || (publishMode && !!publishResult)}
               autocomplete="off"
             />
           </div>
@@ -1015,7 +1060,7 @@
               class="setting-input"
               type="text"
               bind:value={publishPreviewCollectionName}
-              disabled={publishPreviewLoading}
+              disabled={publishPreviewLoading || (publishMode && !!publishResult)}
             />
           </div>
         </div>
@@ -1024,7 +1069,47 @@
           <div class="preview-error">{publishPreviewError}</div>
         {/if}
 
-        {#if publishPreviewSummary}
+        {#if publishMode && publishResult}
+          <div role="status" class="setting-title">
+            {publishResult.summary.errors.length ? 'Publish completed with errors' : publishResult.summary.warnings.length ? 'Publish completed with warnings' : 'Publish completed'}
+          </div>
+          <div class="preview-summary">
+            <div class="preview-summary-item">
+              <span class="preview-summary-label">{publishResult.created_collection ? 'Created collection' : 'Existing collection'}</span>
+              <span class="preview-summary-value">{publishResult.collection_id}</span>
+              <span>{publishMessage(publishResult.collection_name)}</span>
+            </div>
+            {#each [
+              ['Processed items', 'processed_items'],
+              ['Ensured associations', 'ensured_associations'],
+              ['Removed associations', 'removed_associations'],
+              ['Created sources', 'created_sources'],
+              ['No-op items', 'noop_items'],
+              ['Metadata updates attempted', 'metadata_updates_attempted'],
+              ['Metadata updates succeeded', 'metadata_updates_succeeded'],
+              ['Metadata updates failed', 'metadata_updates_failed'],
+            ] as [label, key]}
+              <div class="preview-summary-item">
+                <span class="preview-summary-label">{label}</span>
+                <span class="preview-summary-value">{publishResult.summary[key]}</span>
+              </div>
+            {/each}
+          </div>
+          {#if publishResult.summary.errors.length}
+            <div class="preview-error" role="alert">
+              <strong>Errors</strong>
+              <ul>{#each publishResult.summary.errors as message}<li>{publishMessage(message)}</li>{/each}</ul>
+            </div>
+          {/if}
+          {#if publishResult.summary.warnings.length}
+            <div class="setting-desc">
+              <strong>Warnings</strong>
+              <ul>{#each publishResult.summary.warnings as message}<li>{publishMessage(message)}</li>{/each}</ul>
+            </div>
+          {/if}
+        {/if}
+
+        {#if !publishMode && publishPreviewSummary}
           <div class="preview-summary">
             <div class="preview-summary-item">
               <span class="preview-summary-label">Target</span>
@@ -1102,10 +1187,10 @@
         </button>
         <button
           class="btn btn-primary"
-          disabled={publishPreviewLoading || !publishPreviewToken.trim()}
-          on:click={handlePublishPreview}
+          disabled={publishPreviewLoading || !publishPreviewToken.trim() || (publishMode && !!publishResult)}
+          on:click={publishMode ? handlePublish : handlePublishPreview}
         >
-          {publishPreviewLoading ? 'Previewing...' : 'Preview publish'}
+          {publishMode ? (publishPreviewLoading ? 'Publishing...' : 'Publish') : (publishPreviewLoading ? 'Previewing...' : 'Preview publish')}
         </button>
       </div>
     </div>
