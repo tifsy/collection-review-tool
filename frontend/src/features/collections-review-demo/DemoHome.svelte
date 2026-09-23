@@ -609,7 +609,7 @@
         <button
           class="review-row"
           class:first={i === 0}
-          on:click={() => onNavigate('/demo/reviews/124')}
+          on:click={() => onNavigate(`/demo/review-projects/${r.guid}`)}
         >
           <div class="review-info">
             <div class="review-name">{r.name}</div>
@@ -627,7 +627,7 @@
           <div class="review-action">
             <button
               class="btn btn-sm"
-              on:click|stopPropagation={() => onNavigate('/demo/reviews/124')}
+              on:click|stopPropagation={() => onNavigate(`/demo/review-projects/${r.guid}`)}
             >
               <svg
                 width="11"
@@ -840,7 +840,7 @@
         class:first={i === 0}
         on:click={() => {
           showAllInProgress = false;
-          onNavigate('/demo/reviews/124');
+          onNavigate(`/demo/review-projects/${r.guid}`);
         }}
       >
         <div class="review-info">

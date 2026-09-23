@@ -26,7 +26,7 @@
           ]
         : role === 'queue'
           ? [
-              { n: 'My queue', to: '/demo/reviews/124', active: true },
+              { n: 'My queue', to: queueGuid ? `/demo/reviews/${queueGuid}` : '/demo/projects', active: true },
               {
                 n: 'Decisions',
                 to: `/demo/review-projects/${projectGuid}/queues/${queueGuid}/decisions`,
@@ -34,7 +34,7 @@
             ]
           : role === 'queue-decisions'
             ? [
-                { n: 'My queue', to: '/demo/reviews/124' },
+                { n: 'My queue', to: queueGuid ? `/demo/reviews/${queueGuid}` : '/demo/projects' },
                 {
                   n: 'Decisions',
                   to: `/demo/review-projects/${projectGuid}/queues/${queueGuid}/decisions`,

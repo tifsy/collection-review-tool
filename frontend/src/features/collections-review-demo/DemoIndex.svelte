@@ -30,7 +30,7 @@
         {
           title: 'Review screen',
           sub: 'One source at a time — decide and advance',
-          path: '/demo/reviews/124',
+          path: '/demo/projects',
         },
       ],
     },
