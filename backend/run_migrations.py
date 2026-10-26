@@ -340,7 +340,32 @@ def run_all_migrations():
                         text("ALTER TABLE review_projects ADD COLUMN publish_to_collection INTEGER")
                     )
                     print("Successfully added 'publish_to_collection' column to review_projects table.")
-            
+
+            # Migration 13: AI reviewer import (projects, project sources, items)
+            print("\nRunning migration: AI reviewer import columns")
+            for table, column in [
+                ('review_projects', 'ai_source_url'),
+                ('review_projects', 'ai_callback_url'),
+                ('review_projects', 'ai_proposal_json'),
+                ('review_project_sources', 'ai_json'),
+                ('review_items', 'ai_json'),
+            ]:
+                if is_sqlite:
+                    result = conn.execute(text(f"PRAGMA table_info({table})"))
+                    exists = column in [row[1] for row in result]
+                else:
+                    result = conn.execute(text(f"""
+                        SELECT column_name
+                        FROM information_schema.columns
+                        WHERE table_name='{table}' AND column_name='{column}'
+                    """))
+                    exists = result.fetchone() is not None
+                if exists:
+                    print(f"Column '{column}' already exists on {table}. No migration needed.")
+                else:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} TEXT"))
+                    print(f"Successfully added '{column}' column to {table} table.")
+
             trans.commit()
             print("\n✓ All migrations completed successfully.")
             

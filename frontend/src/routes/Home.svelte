@@ -8,7 +8,33 @@
     getGuidelineTemplates,
     getReviewProjects,
     getCountryCollections,
+    importAiReview,
+    generateReviewProjectQueues,
   } from '../lib/api.js';
+
+  // Import an AI review (from the AI reviewer: /api/collections/<key>/proposal.json)
+  let showImportAi = false;
+  let aiUrl = '';
+  let aiName = '';
+  let aiQueueCount = 2;
+  let aiLoading = false;
+  let aiError = null;
+
+  async function handleAiImport() {
+    aiLoading = true;
+    aiError = null;
+    try {
+      const result = await importAiReview({ url: aiUrl.trim(), name: aiName.trim() || undefined });
+      const guid = result.project.guid;
+      await generateReviewProjectQueues(guid, Math.max(1, Number(aiQueueCount) || 1));
+      window.navigate(`/review-projects/${guid}`);
+    } catch (err) {
+      aiError = err.response?.data?.error || err.message || 'Could not import the AI review';
+      console.error('Error importing AI review:', err);
+    } finally {
+      aiLoading = false;
+    }
+  }
 
   let collectionId = '';
   let projectCollectionIdsInput = '';
@@ -44,6 +70,11 @@
   let selectedGeoIds = [];
 
   onMount(async () => {
+    const importUrl = new URLSearchParams(window.location.search).get('import');
+    if (importUrl) {
+      aiUrl = importUrl;
+      showImportAi = true;
+    }
     await loadReviewProjects();
   });
 
@@ -399,6 +430,51 @@
           </div>
         {/if}
       </section>
+
+      <div class="start-project-footer">
+        <button type="button" class="text-link-btn" on:click={() => (showImportAi = !showImportAi)}>
+          {showImportAi ? 'Hide AI review import' : 'Import an AI review'}
+        </button>
+      </div>
+
+      {#if showImportAi}
+        <div class="project-divider" />
+        <div class="project-section">
+          <h2>Import an AI review</h2>
+          <p class="subtitle">
+            Start a project from a collection the AI reviewer has checked. Its clear calls arrive
+            filled in with the AI's reason, so reviewers only get what the AI could not settle; the
+            reasons are listed in the project's guidelines.
+          </p>
+          <form on:submit|preventDefault={handleAiImport}>
+            <div class="form-group">
+              <label for="ai-url">AI review address</label>
+              <input
+                id="ai-url"
+                type="url"
+                bind:value={aiUrl}
+                placeholder="https://ai-reviewer.example.org/api/collections/34412288/proposal.json"
+                required
+                disabled={aiLoading}
+              />
+            </div>
+            <div class="form-group">
+              <label for="ai-name">Project name (optional)</label>
+              <input id="ai-name" type="text" bind:value={aiName} disabled={aiLoading} />
+            </div>
+            <div class="form-group">
+              <label for="ai-queues">Reviewer queues</label>
+              <input id="ai-queues" type="number" min="1" bind:value={aiQueueCount} disabled={aiLoading} />
+            </div>
+            {#if aiError}
+              <div class="error">{aiError}</div>
+            {/if}
+            <button type="submit" disabled={aiLoading || !aiUrl.trim()}>
+              {aiLoading ? 'Importing…' : 'Import and create queues'}
+            </button>
+          </form>
+        </div>
+      {/if}
 
       <div class="start-project-footer">
         <button

@@ -82,6 +82,30 @@ export async function generateReviewProjectQueues(projectGuid, queueCount) {
 }
 
 /**
+ * Start a ReviewProject from the AI reviewer's AI-enhanced collection (schema mediacloud-ai-review/1).
+ * @param {{url?: string, proposal?: object, name?: string}} body
+ * @returns {Promise<{project: object, existing_sources: number, new_sources: number, summary: object}>}
+ */
+export async function importAiReview(body) {
+  const response = await api.post('/review-projects/import-ai', body);
+  return response.data;
+}
+
+/**
+ * Send the project's decisions back to the AI reviewer, which rebuilds the collection's final package.
+ * @param {string} projectGuid
+ */
+export async function sendAiDecisions(projectGuid) {
+  const response = await api.post(`/review-projects/${projectGuid}/ai-decisions/send`);
+  return response.data;
+}
+
+/** URL of the project's decisions in the AI reviewer's format (for download). */
+export function getAiDecisionsUrl(projectGuid) {
+  return `${API_BASE_URL}/review-projects/${projectGuid}/ai-decisions`;
+}
+
+/**
  * Get a ReviewProject (manager view).
  * @param {string} projectGuid
  */

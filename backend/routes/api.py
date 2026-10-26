@@ -5,6 +5,7 @@ from models import Review, ReviewItem, ReviewStatus, Decision, ReviewProject, Re
 from services.mediacloud import get_mediacloud_service
 from services.mediacloud_publish import MediaCloudPublishService
 from services.guidelines import get_guidelines_service
+from services import ai_reviewer
 from config import get_config
 from datetime import datetime
 from urllib.parse import urlparse
@@ -13,6 +14,8 @@ import io
 import os
 import json
 import uuid
+
+import requests
 
 api_bp = Blueprint('api', __name__)
 
@@ -934,16 +937,19 @@ def generate_review_project_queues(project_guid):
 
         project = ReviewProject.query.filter_by(guid=project_guid).first_or_404()
         collection_ids = json.loads(project.collection_ids_json or '[]')
-        if not collection_ids:
+        # An AI review of a proposed collection (not in Media Cloud yet) has no collection id
+        if not collection_ids and not project.ai_proposal_json:
             return jsonify({'error': 'ReviewProject is missing collection_ids'}), 400
-        primary_collection_id = collection_ids[0]
+        primary_collection_id = collection_ids[0] if collection_ids else 0
 
         existing_queues_count = Review.query.filter_by(review_project_id=project.id).count()
         if existing_queues_count > 0:
             return jsonify({'error': 'Reviewer queues were already generated for this project'}), 400
 
         sources = ReviewProjectSource.query.filter_by(review_project_id=project.id).order_by(ReviewProjectSource.id.asc()).all()
-        sources_total = len(sources)
+        sources = ai_reviewer.order_for_queues(sources)
+        new_sources_total = ai_reviewer.new_source_count(project)
+        sources_total = len(sources) + new_sources_total
         if sources_total == 0:
             return jsonify({'error': 'No sources found for this project; cannot generate queues'}), 400
 
@@ -990,9 +996,15 @@ def generate_review_project_queues(project_guid):
                     decision=Decision.UNDECIDED,
                     source_metadata=source.source_metadata,
                 )
+                if source.ai_json:
+                    ai_reviewer.apply_ai(item, json.loads(source.ai_json))
                 db.session.add(item)
 
             created_queues.append(queue_review)
+
+        if new_sources_total:
+            # the AI's additions, continuing the round-robin where the seed sources left off
+            ai_reviewer.add_new_source_items(project, created_queues, start=len(sources) % effective_queue_count)
 
         db.session.commit()
 
@@ -1004,6 +1016,63 @@ def generate_review_project_queues(project_guid):
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': f'Failed to generate queues: {str(e)}'}), 500
+
+
+@api_bp.route('/review-projects/import-ai', methods=['POST'])
+def import_ai_review():
+    """
+    Start a ReviewProject from the AI reviewer's AI-enhanced collection (schema mediacloud-ai-review/1).
+    The AI's clear calls arrive filled in; what it left for people arrives undecided. Generate the reviewer
+    queues afterwards as for any project (POST /api/review-projects/<guid>/queues).
+
+    POST /api/review-projects/import-ai
+    Body: { "url": "<ai reviewer>/api/collections/<key>/proposal.json" }  or  { "proposal": {...} },
+          optional "name", "edit_metadata"
+    """
+    data = request.get_json() or {}
+    try:
+        if data.get('proposal'):
+            proposal = data['proposal']
+        elif data.get('url'):
+            proposal = ai_reviewer.fetch_proposal(data['url'])
+        else:
+            return jsonify({'error': 'Give the AI review as "url" or "proposal"'}), 400
+        project, existing, new = ai_reviewer.create_project(
+            proposal, source_url=data.get('url'), name=data.get('name'), edit_metadata=data.get('edit_metadata', False)
+        )
+        db.session.commit()
+    except (ValueError, requests.RequestException) as e:
+        db.session.rollback()
+        return jsonify({'error': f'Could not import the AI review: {e}'}), 400
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': f'Failed to import the AI review: {str(e)}'}), 500
+    return jsonify({
+        'project': project.to_dict(),
+        'existing_sources': existing,
+        'new_sources': new,
+        'summary': proposal.get('summary'),
+    }), 201
+
+
+@api_bp.route('/review-projects/<string:project_guid>/ai-decisions', methods=['GET'])
+def get_ai_decisions(project_guid):
+    """Every item's current decision, in the AI reviewer's format (schema mediacloud-ai-review-decisions/1)."""
+    project = ReviewProject.query.filter_by(guid=project_guid).first_or_404()
+    return jsonify(ai_reviewer.collect_decisions(project, f"{request.host_url.rstrip('/')}/review-projects/{project.guid}"))
+
+
+@api_bp.route('/review-projects/<string:project_guid>/ai-decisions/send', methods=['POST'])
+def send_ai_decisions(project_guid):
+    """Send the decisions back to the AI reviewer, which rebuilds the collection's final package."""
+    project = ReviewProject.query.filter_by(guid=project_guid).first_or_404()
+    try:
+        result = ai_reviewer.send_decisions(project, f"{request.host_url.rstrip('/')}/review-projects/{project.guid}")
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except (RuntimeError, requests.RequestException) as e:
+        return jsonify({'error': f'Could not send the decisions: {e}'}), 502
+    return jsonify(result), 200
 
 
 @api_bp.route('/review-projects', methods=['GET'])
@@ -1141,7 +1210,9 @@ def _load_mc_csv_column_names():
 def _review_project_item_mc_row_values(item, mc_columns):
     """Build one CSV row (list of strings) for a ReviewItem in Media Cloud column order (any decision)."""
     row = {}
-    if item.is_new_source:
+    # A new source imported from the AI reviewer carries its metadata (and its directory id, when it has one):
+    # export it through the metadata branch below.
+    if item.is_new_source and not item.ai_json:
         homepage = item.source_homepage or ''
         domain = _extract_domain_from_homepage(homepage)
         label = item.source_label or ''
@@ -1256,7 +1327,8 @@ def export_review_project_audit(project_guid):
         queue_by_review_id = {q.id: q for q in queues}
 
         mc_columns = _load_mc_csv_column_names()
-        extra = ['review_decision', 'removal_reason', 'skip_note', 'reviewer_queue']
+        extra = ['review_decision', 'removal_reason', 'skip_note', 'reviewer_queue',
+                 'ai_decision', 'ai_decided_by', 'ai_reason', 'decided_at']
 
         output = io.StringIO()
         writer = csv.writer(output)
@@ -1292,6 +1364,7 @@ def export_review_project_audit(project_guid):
             qn = ''
             if q is not None and q.queue_index is not None:
                 qn = (q.queue_index or 0) + 1
+            ai = json.loads(item.ai_json) if item.ai_json else {}
             writer.writerow(
                 base
                 + [
@@ -1299,6 +1372,10 @@ def export_review_project_audit(project_guid):
                     item.removal_reason or '',
                     item.skip_note or '',
                     qn,
+                    ai.get('decision', ''),
+                    ai.get('decided_by', ''),
+                    ai.get('reason', ''),
+                    item.decided_at.isoformat() if item.decided_at else '',
                 ]
             )
 

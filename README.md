@@ -6,6 +6,7 @@ A standalone web application for reviewing sources in MediaCloud collections and
 
 - Manage multi-collection `ReviewProject`s (manager view)
 - Seed a project from multiple MediaCloud `collection_id`s with deduped sources
+- Or import an AI review from the collection AI reviewer: its clear calls arrive filled in with their reasons, reviewers get only what it could not settle, and the decisions go back with one button (see [docs/AI_REVIEW_IMPORT.md](docs/AI_REVIEW_IMPORT.md))
 - Seed collection names are stored and displayed on the project page
 - Two-step project setup:
   - Step 1: start a `ReviewProject` (sources are fetched/stored at the project level)
