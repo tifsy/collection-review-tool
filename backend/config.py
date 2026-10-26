@@ -26,6 +26,8 @@ class Config:
     ).lower() in ('1', 'true', 'yes', 'y')
     # Optional base URL for building MediaCloud web links in the UI/API responses.
     MEDIACLOUD_SEARCH_BASE_URL = os.getenv('MEDIACLOUD_SEARCH_BASE_URL', 'https://search.mediacloud.org')
+    # Bearer token for the AI reviewer's API (its APP_TOKEN): importing AI reviews, sending decisions back
+    AI_REVIEWER_TOKEN = os.getenv('AI_REVIEWER_TOKEN', '')
     
     # Flask configuration
     SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')

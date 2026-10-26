@@ -13,8 +13,28 @@
     setReviewProjectGuidelines,
     publishReviewProject,
     previewPublishReviewProject,
+    sendAiDecisions,
+    getAiDecisionsUrl,
     MEDIACLOUD_SEARCH_BASE_URL,
   } from '../lib/api.js';
+
+  // Projects imported from the AI reviewer: send the decisions back for the final package
+  let aiSending = false;
+  let aiResult = null;
+  let aiError = null;
+
+  async function handleSendAiDecisions() {
+    aiSending = true;
+    aiError = null;
+    aiResult = null;
+    try {
+      aiResult = await sendAiDecisions(projectGuid);
+    } catch (err) {
+      aiError = err.response?.data?.error || err.message || 'Could not send the decisions';
+    } finally {
+      aiSending = false;
+    }
+  }
 
   let projectGuid = null;
   let project = null;
@@ -874,6 +894,42 @@
         {/if}
       </div>
 
+      {#if project?.is_ai_import}
+        <section class="ai-panel" aria-labelledby="ai-panel-heading">
+          <h2 id="ai-panel-heading">AI review</h2>
+          <p>
+            This project was imported from the AI reviewer{project.ai_source_url ? ':' : '.'}
+            {#if project.ai_source_url}
+              <a href={project.ai_source_url} target="_blank" rel="noopener noreferrer">{project.ai_source_url}</a>
+            {/if}
+            The AI's clear calls arrived filled in, with its reason as the removal reason or skip note; the
+            reviewer queues hold what it left for people. When the review is done, send the decisions back:
+            the AI reviewer rebuilds the collection and produces the final files for Media Cloud.
+          </p>
+          <div class="ai-panel-actions">
+            <button type="button" on:click={handleSendAiDecisions} disabled={aiSending || !project.ai_callback_url}>
+              {aiSending ? 'Sending…' : 'Send decisions to the AI reviewer'}
+            </button>
+            <a href={getAiDecisionsUrl(projectGuid)} target="_blank" rel="noopener noreferrer">Decisions as JSON</a>
+          </div>
+          {#if !project.ai_callback_url}
+            <p class="ai-panel-note">The AI review did not include a callback address: download the decisions and upload them in the AI reviewer.</p>
+          {/if}
+          {#if aiError}
+            <div class="error">{aiError}</div>
+          {/if}
+          {#if aiResult}
+            <p class="ai-panel-note">
+              Sent {aiResult.decisions} decisions.
+              {#if aiResult.agreement_rate !== null && aiResult.agreement_rate !== undefined}
+                Reviewers agreed with the AI on {Math.round(aiResult.agreement_rate * 100)}% of the calls they checked.
+              {/if}
+              {#if aiResult.job_id}The AI reviewer is rebuilding the package (job {aiResult.job_id}).{/if}
+            </p>
+          {/if}
+        </section>
+      {/if}
+
       <ProjectExportPanel
         {projectGuid}
         {canDownloadMainCsv}
@@ -1378,6 +1434,36 @@
   .meta-row-seed {
     margin-bottom: 0;
     align-items: flex-start;
+  }
+
+  .ai-panel {
+    margin: 20px 0;
+    padding: 16px 18px;
+    border: 1px solid #c9d8ec;
+    border-radius: 8px;
+    background: #f3f7fc;
+  }
+
+  .ai-panel h2 {
+    margin: 0 0 8px;
+    font-size: 18px;
+  }
+
+  .ai-panel p {
+    margin: 0 0 12px;
+    line-height: 1.5;
+  }
+
+  .ai-panel-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .ai-panel-note {
+    margin-top: 12px;
+    color: #3b4b5c;
   }
 
   .seed-collections-explainer,

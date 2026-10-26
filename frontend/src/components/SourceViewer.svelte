@@ -227,6 +227,34 @@
         <span class="badge new-source">New Source</span>
       {/if}
 
+      {#if item.ai}
+        <div class="ai-callout" role="note" aria-label="AI reviewer">
+          <div class="ai-label">
+            AI reviewer:
+            {#if item.ai.decision === 'undecided'}
+              left for you{item.ai.proposal ? ` (leans ${item.ai.proposal})` : ''}
+            {:else}
+              {item.ai.decision}
+            {/if}
+            {#if item.ai.decided_by}<span class="ai-by">· {item.ai.decided_by}</span>{/if}
+          </div>
+          {#if item.ai.why_human}
+            <div class="ai-text"><strong>Why you:</strong> {item.ai.why_human}</div>
+          {/if}
+          {#if item.ai.reason && item.ai.reason !== item.ai.why_human}
+            <div class="ai-text">{item.ai.reason}</div>
+          {/if}
+          {#if item.ai.evidence && item.ai.evidence.mc_status}
+            <div class="ai-evidence">
+              Media Cloud: {item.ai.evidence.mc_status}, {item.ai.evidence.d90 || 0} stories in 90 days,
+              {item.ai.evidence.stories_total || 0} in total{item.ai.evidence.last_story
+                ? `, last ${item.ai.evidence.last_story}`
+                : ''}
+            </div>
+          {/if}
+        </div>
+      {/if}
+
       {#if item.skip_note}
         <div class="skip-note-callout" role="note">
           <div class="skip-note-label">Skip note</div>
@@ -706,6 +734,43 @@
   .new-source {
     background-color: #3498db;
     color: white;
+  }
+
+  .ai-callout {
+    margin-top: 14px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    border: 1px solid #c9d8ec;
+    background: #f3f7fc;
+  }
+
+  .ai-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #1f4f86;
+    margin-bottom: 6px;
+  }
+
+  .ai-by {
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+
+  .ai-text,
+  .ai-evidence {
+    font-size: 14px;
+    line-height: 1.45;
+    color: #22303f;
+    word-break: break-word;
+  }
+
+  .ai-evidence {
+    margin-top: 4px;
+    font-size: 13px;
+    color: #4d5b6b;
   }
 
   .skip-note-callout {

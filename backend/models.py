@@ -50,6 +50,11 @@ class ReviewProject(db.Model, TimestampMixin):
     # MediaCloud collection id used as publish target.
     # First publish creates it; later publishes sync into the same collection.
     publish_to_collection = db.Column(db.Integer, nullable=True)
+    # Projects imported from the AI reviewer (mediacloud-ai-reviewer): where the AI-enhanced collection came from,
+    # where the decisions go back to, and the proposal itself (its new sources become items at queue generation).
+    ai_source_url = db.Column(db.Text, nullable=True)
+    ai_callback_url = db.Column(db.Text, nullable=True)
+    ai_proposal_json = db.Column(db.Text, nullable=True)
 
     queues = db.relationship(
         'Review',
@@ -80,6 +85,9 @@ class ReviewProject(db.Model, TimestampMixin):
             'edit_metadata': bool(self.edit_metadata),
             'show_virtual_queue_links_on_reviewer_landing': bool(self.show_virtual_queue_links_on_reviewer_landing),
             'publish_to_collection': self.publish_to_collection,
+            'ai_source_url': self.ai_source_url,
+            'ai_callback_url': self.ai_callback_url,
+            'is_ai_import': bool(self.ai_proposal_json),
         }
         if include_queues:
             data['queues'] = [q.to_dict(include_stats=True) for q in (self.queues or [])]
@@ -100,6 +108,8 @@ class ReviewProjectSource(db.Model, TimestampMixin):
 
     # JSON-encoded full source object snapshot (for later export / context)
     source_metadata = db.Column(db.Text, nullable=True)
+    # The AI reviewer's proposal for this source (JSON: decision, reason, evidence...), when imported
+    ai_json = db.Column(db.Text, nullable=True)
 
 
 class Review(db.Model, TimestampMixin):
@@ -187,6 +197,9 @@ class ReviewItem(db.Model, TimestampMixin):
     # Aligns with web-search Source model fields where present, e.g. stories_total,
     # stories_per_week, last_story, media_type, pub_country, primary_language.
     source_metadata = db.Column(db.Text, nullable=True)
+    # The AI reviewer's proposal (JSON: key, decision, proposal, action, decided_by, reason, note, why_human,
+    # evidence). A decision the AI filled in has no decided_at; a person's decision sets it.
+    ai_json = db.Column(db.Text, nullable=True)
     
     def to_dict(self):
         """Convert review item to dictionary."""
@@ -208,5 +221,6 @@ class ReviewItem(db.Model, TimestampMixin):
             'decided_at': self.decided_at.isoformat() if self.decided_at else None,
             'removal_reason': self.removal_reason,
             'skip_note': self.skip_note,
-            'source_metadata': metadata
+            'source_metadata': metadata,
+            'ai': json.loads(self.ai_json) if self.ai_json else None,
         }
