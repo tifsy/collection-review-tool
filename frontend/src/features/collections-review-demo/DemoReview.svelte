@@ -646,6 +646,42 @@
           </div>
         </div>
 
+        <!-- AI reviewer's call (projects imported from the AI reviewer) -->
+        {#if src.ai}
+          {@const ai = src.ai}
+          {@const evidence = ai.evidence ?? {}}
+          <div class="ai-box" role="note" aria-label="AI reviewer">
+            <div class="ai-box-label">
+              AI reviewer ·
+              {#if ai.decision === 'undecided'}
+                left for you{ai.proposal ? ` (leans ${ai.proposal})` : ''}
+              {:else}
+                {ai.decision}
+              {/if}
+              {#if ai.decided_by}<span class="ai-box-by">· {ai.decided_by}</span>{/if}
+            </div>
+            {#if ai.why_human}
+              <div class="ai-box-text"><b>Why you:</b> {ai.why_human}</div>
+            {/if}
+            {#if ai.reason && ai.reason !== ai.why_human}
+              <div class="ai-box-text">{ai.reason}</div>
+            {/if}
+            {#if evidence.mc_status}
+              <div class="ai-box-evidence">
+                Media Cloud: {evidence.mc_status}, {evidence.d90 || 0} stories in 90 days,
+                {evidence.stories_total || 0} in total{evidence.last_story
+                  ? `, last ${evidence.last_story}`
+                  : ''}
+              </div>
+            {/if}
+            {#if src.decision !== 'undecided' && !src.decided_at}
+              <div class="ai-box-evidence">
+                The decision above is the AI's. Confirm it or change it to record your own.
+              </div>
+            {/if}
+          </div>
+        {/if}
+
         <!-- Metadata section -->
         <div class="meta-heading-row">
           <span class="meta-heading">Source metadata</span>
@@ -1223,6 +1259,39 @@
     font-size: var(--v2-text-secondary);
     color: var(--v2-mute);
     font-style: italic;
+  }
+
+  /* ── AI reviewer ── */
+  .ai-box {
+    margin: 14px 28px 0;
+    padding: 12px 16px;
+    border: 1px solid var(--v2-line);
+    border-radius: 12px;
+    background: var(--v2-surface);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .ai-box-label {
+    font-size: var(--v2-text-caption);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--v2-added);
+  }
+  .ai-box-by {
+    font-weight: 500;
+    color: var(--v2-mute);
+  }
+  .ai-box-text {
+    font-size: var(--v2-text-control);
+    color: var(--v2-body);
+    line-height: 1.5;
+    word-break: break-word;
+  }
+  .ai-box-evidence {
+    font-size: var(--v2-text-caption);
+    color: var(--v2-mute);
   }
 
   /* ── Metadata ── */
