@@ -25,6 +25,17 @@ rebuild the collection's final package. Existing projects and workflows are unch
   (schema `mediacloud-ai-review-decisions/1`); `POST /api/review-projects/<guid>/ai-decisions/send` posts them to the
   callback address given in the AI review.
 
+## In the demo UI (`/demo/*`)
+
+- **Projects page (`/demo/manage`):** **Import AI review** opens a form taking an AI reviewer link or a downloaded
+  JSON file, an optional project name and the number of reviewer queues; it imports the review, creates the
+  queues and opens the project. `/demo/manage?import=<url>` opens the form with the link filled in.
+- **Review screen:** each source from an AI review shows an **AI reviewer** box with the AI's call, why it was left
+  to the reviewer, its reason and Media Cloud's counts. While the shown decision is still the AI's prefill, the box
+  says so.
+- **Project page:** an **AI review** card links to where the review came from, offers **Send decisions to the AI
+  reviewer** (when the review has a trusted callback) and **Decisions as JSON**.
+
 ## Configuration and security
 
 | Variable | Purpose |
