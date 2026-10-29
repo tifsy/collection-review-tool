@@ -7,3 +7,4 @@ Flask-Migrate==4.0.5
 gunicorn==23.0.0
 psycopg2-binary>=2.9.0
 git+https://github.com/mediacloud/mc-manage.git
+requests>=2.31
