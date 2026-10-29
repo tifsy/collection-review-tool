@@ -81,6 +81,9 @@ export async function loadProject(projectGuid) {
     editMetadata: project.edit_metadata,
     publishEnabled: data.publish_enabled,
     showVirtualQueueLinks: project.show_virtual_queue_links_on_reviewer_landing,
+    ai: project.is_ai_import
+      ? { sourceUrl: project.ai_source_url, callbackUrl: project.ai_callback_url }
+      : null,
   };
 }
 

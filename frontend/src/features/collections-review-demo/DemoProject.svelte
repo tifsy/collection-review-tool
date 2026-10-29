@@ -5,6 +5,7 @@
     decideQueueItem,
     generateReviewProjectQueues,
     getAddedItemsByProjectGuid,
+    getAiDecisionsUrl,
     getKeptItemsByProjectGuid,
     getRemovedItemsByProjectGuid,
     getReviewProjectAuditExportUrl,
@@ -13,6 +14,7 @@
     getSkippedItemsByProjectGuid,
     previewPublishReviewProject,
     publishReviewProject,
+    sendAiDecisions,
     setReviewProjectEditMetadata,
     setReviewProjectGuidelines,
     setReviewProjectName,
@@ -239,6 +241,28 @@
 
     csvToast = type === 'audit' ? 'Audit CSV downloaded' : 'Project CSV downloaded';
     setTimeout(() => (csvToast = ''), 2000);
+  }
+
+  // ── AI review: send decisions back ─────────────────────────────────────
+  let aiSending = false;
+  let aiSendError = '';
+  let aiSendResult = null;
+
+  async function handleSendAiDecisions() {
+    if (aiSending) return;
+
+    try {
+      aiSending = true;
+      aiSendError = '';
+      aiSendResult = null;
+
+      aiSendResult = await sendAiDecisions(projectGuid, window.location.href);
+    } catch (error) {
+      console.error(error);
+      aiSendError = error.response?.data?.error || error.message || 'Could not send the decisions.';
+    } finally {
+      aiSending = false;
+    }
   }
 
   // ── Publish preview ───────────────────────────────────────────────────
@@ -631,6 +655,64 @@
         </div>
       </div>
     </div>
+
+    <!-- ── AI REVIEW (projects imported from the AI reviewer) ── -->
+    {#if p.ai}
+      <div class="section-pad-sm">
+        <div class="card">
+          <div class="seed-row">
+            <div class="seed-label-col"><span class="seed-label">AI review</span></div>
+            <div class="seed-content">
+              <div class="seed-chips">
+                <button
+                  class="btn btn-primary btn-sm"
+                  on:click={handleSendAiDecisions}
+                  disabled={aiSending || !p.ai.callbackUrl}
+                >
+                  {aiSending ? 'Sending...' : 'Send decisions to the AI reviewer'}
+                </button>
+                <a
+                  class="btn btn-sm"
+                  href={getAiDecisionsUrl(projectGuid)}
+                  target="_blank"
+                  rel="noopener noreferrer">Decisions as JSON</a
+                >
+              </div>
+              <p class="seed-hint">
+                Imported from the AI reviewer{#if p.ai.sourceUrl}:
+                  <a href={p.ai.sourceUrl} target="_blank" rel="noopener noreferrer"
+                    >{p.ai.sourceUrl}</a
+                  >{:else}
+                  (uploaded JSON){/if}. The AI's clear calls arrived filled in; reviewers decide
+                what it left open. When the review is done, send the decisions back so the AI
+                reviewer can rebuild the collection's final package.
+              </p>
+              {#if !p.ai.callbackUrl}
+                <p class="seed-hint">
+                  This AI review has no trusted address to send decisions to: download the decisions
+                  as JSON and upload them in the AI reviewer.
+                </p>
+              {/if}
+              {#if aiSendError}
+                <p class="seed-hint" style="color: #b42318;" role="alert">{aiSendError}</p>
+              {/if}
+              {#if aiSendResult}
+                <p class="seed-hint" role="status">
+                  Sent {aiSendResult.decisions ?? 'the'} decisions.
+                  {#if aiSendResult.agreement_rate != null}
+                    Reviewers agreed with the AI on {Math.round(aiSendResult.agreement_rate * 100)}%
+                    of the calls they checked.
+                  {/if}
+                  {#if aiSendResult.job_id}
+                    The AI reviewer is rebuilding the package (job {aiSendResult.job_id}).
+                  {/if}
+                </p>
+              {/if}
+            </div>
+          </div>
+        </div>
+      </div>
+    {/if}
 
     <!-- ── REVIEWER QUEUES ── -->
     <div class="queues-section">
@@ -1626,6 +1708,9 @@
     color: #9a9ca2;
     margin: 12px 0 0;
     line-height: 1.5;
+  }
+  a.btn {
+    text-decoration: none;
   }
 
   /* ── Queues ── */

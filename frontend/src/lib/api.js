@@ -92,6 +92,23 @@ export async function importAiReview(body) {
 }
 
 /**
+ * Send the project's decisions back to the AI reviewer, which rebuilds the collection's final package.
+ * @param {string} projectGuid
+ * @param {string} projectUrl - page the decisions were made on, passed along to the AI reviewer
+ */
+export async function sendAiDecisions(projectGuid, projectUrl) {
+  const response = await api.post(`/review-projects/${projectGuid}/ai-decisions/send`, {
+    project_url: projectUrl,
+  });
+  return response.data;
+}
+
+/** URL of the project's decisions in the AI reviewer's format (for download). */
+export function getAiDecisionsUrl(projectGuid) {
+  return `${API_BASE_URL}/review-projects/${projectGuid}/ai-decisions`;
+}
+
+/**
  * Get a ReviewProject (manager view).
  * @param {string} projectGuid
  */
