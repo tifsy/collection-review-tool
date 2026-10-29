@@ -4,6 +4,7 @@
   import {
     generateReviewProjectQueues,
     getCountryCollections,
+    importAiReview,
     startReviewProject,
   } from '../../lib/api.js';
   import HelpModal from './HelpModal.svelte';
@@ -80,6 +81,13 @@
     loadProjects().catch((error) => {
       console.error('Failed to load projects'), error;
     });
+
+    // The AI reviewer links here as /demo/manage?import=<AI review URL>
+    const importUrl = new URLSearchParams(window.location.search).get('import');
+    if (importUrl) {
+      openAiImportModal();
+      aiImportUrl = importUrl;
+    }
   });
 
   /* ── Metadata toggle ── */
@@ -294,6 +302,94 @@
     }
   }
 
+  /* ── Import AI review modal ── */
+  let showAiImport = false;
+  let aiImportSource = 'url'; // 'url' | 'file'
+  let aiImportUrl = '';
+  let aiImportFile = null;
+  let aiImportName = '';
+  let aiImportQueueCount = 2;
+  let aiImporting = false;
+  let aiImportError = '';
+  let aiImportResult = null; // { guid, notices } when the project needs attention before opening
+
+  $: canSubmitAiImport =
+    !aiImporting && (aiImportSource === 'url' ? aiImportUrl.trim() : aiImportFile);
+
+  function openAiImportModal() {
+    aiImportSource = 'url';
+    aiImportUrl = '';
+    aiImportFile = null;
+    aiImportName = '';
+    aiImportQueueCount = 2;
+    aiImportError = '';
+    aiImportResult = null;
+    showAiImport = true;
+  }
+
+  async function readAiReviewFile(file) {
+    try {
+      return JSON.parse(await file.text());
+    } catch {
+      throw new Error('The file is not valid JSON.');
+    }
+  }
+
+  async function submitAiImport() {
+    if (!canSubmitAiImport) return;
+
+    const queueCount = Number(aiImportQueueCount);
+    if (!Number.isInteger(queueCount) || queueCount < 1) {
+      aiImportError = 'Queue count must be a positive integer.';
+      return;
+    }
+
+    try {
+      aiImporting = true;
+      aiImportError = '';
+
+      const body = { name: aiImportName.trim() || undefined };
+      if (aiImportSource === 'url') {
+        body.url = aiImportUrl.trim();
+      } else {
+        body.proposal = await readAiReviewFile(aiImportFile);
+      }
+
+      const result = await importAiReview(body);
+      const guid = result.project.guid;
+      const notices = [...(result.warnings ?? [])];
+
+      try {
+        const queueResult = await generateReviewProjectQueues(guid, queueCount);
+        if (queueResult.warning) notices.push(queueResult.warning);
+      } catch (error) {
+        console.error(error);
+        notices.push(
+          `The project was created, but its reviewer queues were not: ${
+            error.response?.data?.error || error.message
+          } Generate them from the project page.`
+        );
+      }
+
+      await loadProjects();
+
+      if (notices.length > 0) {
+        aiImportResult = { guid, notices };
+        return;
+      }
+
+      showAiImport = false;
+      onNavigate(`/demo/review-projects/${guid}`);
+    } catch (error) {
+      console.error(error);
+
+      aiImportError =
+        error.response?.data?.error || error.message || 'Could not import the AI review.';
+    } finally {
+      aiImporting = false;
+    }
+  }
+
   /* ── Projects pagination (10 per page, newest first) ── */
   let projectsPage = 0;
   $: projectsTotal = $projectsStore.length;
@@ -431,6 +527,20 @@
       <h2 class="section-title">Review projects</h2>
     </div>
     <div class="section-header-actions">
+      <button class="btn" on:click={openAiImportModal}>
+        <svg
+          width="13"
+          height="13"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.6"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          ><path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7M8 10l4 4 4-4M12 2v12" /></svg
+        >
+        Import AI review
+      </button>
       <button class="btn" on:click={openNewProjectModal}>
         <svg
           width="13"
@@ -750,6 +860,117 @@
       {newProjectCreating ? 'Creating project...' : 'Start review project'}
     </button>
   </form>
+</Modal>
+
+<!-- Import AI review -->
+<Modal
+  show={showAiImport}
+  title="Import AI review"
+  on:close={() => {
+    if (!aiImporting) showAiImport = false;
+  }}
+>
+  <p class="modal-subtitle">
+    Start a project from a collection the AI reviewer has checked. Its clear calls arrive filled in
+    with the AI's reason, so reviewers only decide what it could not settle.
+  </p>
+  {#if aiImportResult}
+    <div class="modal-form">
+      {#each aiImportResult.notices as notice}
+        <div class="form-hint" style="color: #b42318;" role="alert">{notice}</div>
+      {/each}
+      <button
+        class="btn btn-primary btn-full"
+        type="button"
+        on:click={() => {
+          showAiImport = false;
+          onNavigate(`/demo/review-projects/${aiImportResult.guid}`);
+        }}
+      >
+        Open project
+      </button>
+    </div>
+  {:else}
+    <form class="modal-form" on:submit|preventDefault={submitAiImport}>
+      <div class="form-field">
+        <div class="form-label">AI review</div>
+        <div class="radio-group">
+          <label class="radio-option" class:radio-selected={aiImportSource === 'url'}>
+            <input type="radio" bind:group={aiImportSource} value="url" />
+            <div class="radio-text">
+              <span class="radio-label">AI reviewer link</span>
+              <span class="radio-hint">Fetched from the AI reviewer configured for this tool</span>
+            </div>
+          </label>
+          <label class="radio-option" class:radio-selected={aiImportSource === 'file'}>
+            <input type="radio" bind:group={aiImportSource} value="file" />
+            <div class="radio-text">
+              <span class="radio-label">JSON file</span>
+              <span class="radio-hint">An AI review downloaded from the AI reviewer</span>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      {#if aiImportSource === 'url'}
+        <div class="form-field">
+          <label class="form-label" for="ai-import-url">AI review link</label>
+          <input
+            id="ai-import-url"
+            class="form-input"
+            type="url"
+            bind:value={aiImportUrl}
+            placeholder="https://ai-reviewer.example.org/api/collections/…/proposal.json"
+            autocomplete="off"
+          />
+        </div>
+      {:else}
+        <div class="form-field">
+          <label class="form-label" for="ai-import-file">AI review file</label>
+          <input
+            id="ai-import-file"
+            class="form-input"
+            type="file"
+            accept="application/json,.json"
+            on:change={(e) => (aiImportFile = e.currentTarget.files?.[0] ?? null)}
+          />
+        </div>
+      {/if}
+
+      <div class="form-field">
+        <label class="form-label" for="ai-import-name">Project Name (optional)</label>
+        <input
+          id="ai-import-name"
+          class="form-input"
+          bind:value={aiImportName}
+          placeholder="Defaults to the collection name"
+          autocomplete="off"
+        />
+      </div>
+
+      <div class="form-field">
+        <label class="form-label" for="ai-import-queues">Reviewer queues</label>
+        <input
+          id="ai-import-queues"
+          class="form-input"
+          type="number"
+          min="1"
+          bind:value={aiImportQueueCount}
+        />
+        <div class="form-hint">Items the AI left undecided are spread evenly over the queues.</div>
+      </div>
+
+      {#if aiImportError}
+        <div class="form-hint" style="color: #b42318;" role="alert">
+          {aiImportError}
+        </div>
+      {/if}
+
+      <button class="btn btn-primary btn-full" type="submit" disabled={!canSubmitAiImport}>
+        {aiImporting ? 'Importing...' : 'Import and create queues'}
+      </button>
+    </form>
+  {/if}
 </Modal>
 
 <!-- All in-progress -->

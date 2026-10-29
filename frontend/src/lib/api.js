@@ -82,6 +82,16 @@ export async function generateReviewProjectQueues(projectGuid, queueCount) {
 }
 
 /**
+ * Step 1 alternative: start a ReviewProject from the collection AI reviewer's AI review.
+ * @param {{url?: string, proposal?: object, name?: string}} body
+ * @returns {Promise<{project: object, existing_sources: number, new_sources: number, warnings: string[]}>}
+ */
+export async function importAiReview(body) {
+  const response = await api.post('/review-projects/import-ai', body);
+  return response.data;
+}
+
+/**
  * Get a ReviewProject (manager view).
  * @param {string} projectGuid
  */
